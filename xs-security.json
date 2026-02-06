@@ -1,0 +1,182 @@
+{
+  "xsappname": "sap-ewm-stock-lookup",
+  "tenant-mode": "dedicated",
+  "description": "Security descriptor for EWM Stock Lookup with stock type restrictions",
+  "scopes": [
+    {
+      "name": "$XSAPPNAME.StockRead",
+      "description": "Read warehouse stock data"
+    },
+    {
+      "name": "$XSAPPNAME.StockType.F1",
+      "description": "Access to stock type F1 (Available Stock)"
+    },
+    {
+      "name": "$XSAPPNAME.StockType.F2",
+      "description": "Access to stock type F2 (Quality Inspection)"
+    },
+    {
+      "name": "$XSAPPNAME.StockType.F3",
+      "description": "Access to stock type F3 (Blocked Stock)"
+    },
+    {
+      "name": "$XSAPPNAME.StockType.S1",
+      "description": "Access to stock type S1 (Special Stock 1)"
+    },
+    {
+      "name": "$XSAPPNAME.StockType.S2",
+      "description": "Access to stock type S2 (Special Stock 2)"
+    }
+  ],
+  "attributes": [
+    {
+      "name": "StockType",
+      "description": "Allowed EWM Stock Types for the user",
+      "valueType": "string",
+      "valueRequired": true
+    }
+  ],
+  "role-templates": [
+    {
+      "name": "StockViewer_F1",
+      "description": "View Available Stock (F1) only",
+      "scope-references": [
+        "$XSAPPNAME.StockRead",
+        "$XSAPPNAME.StockType.F1"
+      ],
+      "attribute-references": [
+        {
+          "name": "StockType",
+          "default-values": ["F1"]
+        }
+      ]
+    },
+    {
+      "name": "StockViewer_F2",
+      "description": "View Quality Inspection Stock (F2) only",
+      "scope-references": [
+        "$XSAPPNAME.StockRead",
+        "$XSAPPNAME.StockType.F2"
+      ],
+      "attribute-references": [
+        {
+          "name": "StockType",
+          "default-values": ["F2"]
+        }
+      ]
+    },
+    {
+      "name": "StockViewer_F3",
+      "description": "View Blocked Stock (F3) only",
+      "scope-references": [
+        "$XSAPPNAME.StockRead",
+        "$XSAPPNAME.StockType.F3"
+      ],
+      "attribute-references": [
+        {
+          "name": "StockType",
+          "default-values": ["F3"]
+        }
+      ]
+    },
+    {
+      "name": "StockViewer_Available",
+      "description": "View all available stock types (F1, F2, F3)",
+      "scope-references": [
+        "$XSAPPNAME.StockRead",
+        "$XSAPPNAME.StockType.F1",
+        "$XSAPPNAME.StockType.F2",
+        "$XSAPPNAME.StockType.F3"
+      ],
+      "attribute-references": [
+        {
+          "name": "StockType",
+          "default-values": ["F1", "F2", "F3"]
+        }
+      ]
+    },
+    {
+      "name": "StockViewer_Special",
+      "description": "View special stock types (S1, S2)",
+      "scope-references": [
+        "$XSAPPNAME.StockRead",
+        "$XSAPPNAME.StockType.S1",
+        "$XSAPPNAME.StockType.S2"
+      ],
+      "attribute-references": [
+        {
+          "name": "StockType",
+          "default-values": ["S1", "S2"]
+        }
+      ]
+    },
+    {
+      "name": "StockViewer_All",
+      "description": "View all stock types (Administrator)",
+      "scope-references": [
+        "$XSAPPNAME.StockRead",
+        "$XSAPPNAME.StockType.F1",
+        "$XSAPPNAME.StockType.F2",
+        "$XSAPPNAME.StockType.F3",
+        "$XSAPPNAME.StockType.S1",
+        "$XSAPPNAME.StockType.S2"
+      ],
+      "attribute-references": [
+        {
+          "name": "StockType",
+          "default-values": ["F1", "F2", "F3", "S1", "S2"]
+        }
+      ]
+    }
+  ],
+  "role-collections": [
+    {
+      "name": "EWM_Stock_Viewer_F1",
+      "description": "Users who can view Available Stock (F1)",
+      "role-template-references": [
+        "$XSAPPNAME.StockViewer_F1"
+      ]
+    },
+    {
+      "name": "EWM_Stock_Viewer_F2",
+      "description": "Users who can view Quality Inspection Stock (F2)",
+      "role-template-references": [
+        "$XSAPPNAME.StockViewer_F2"
+      ]
+    },
+    {
+      "name": "EWM_Stock_Viewer_F3",
+      "description": "Users who can view Blocked Stock (F3)",
+      "role-template-references": [
+        "$XSAPPNAME.StockViewer_F3"
+      ]
+    },
+    {
+      "name": "EWM_Stock_Viewer_Available",
+      "description": "Users who can view all available stock (F1, F2, F3)",
+      "role-template-references": [
+        "$XSAPPNAME.StockViewer_Available"
+      ]
+    },
+    {
+      "name": "EWM_Stock_Viewer_Special",
+      "description": "Users who can view special stock (S1, S2)",
+      "role-template-references": [
+        "$XSAPPNAME.StockViewer_Special"
+      ]
+    },
+    {
+      "name": "EWM_Stock_Administrator",
+      "description": "Administrators who can view all stock types",
+      "role-template-references": [
+        "$XSAPPNAME.StockViewer_All"
+      ]
+    }
+  ],
+  "oauth2-configuration": {
+    "token-validity": 900,
+    "redirect-uris": [
+      "https://*.cfapps.*.hana.ondemand.com/**"
+    ]
+  }
+}
