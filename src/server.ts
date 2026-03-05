@@ -19,6 +19,7 @@ app.use(
       "http://127.0.0.1:5173",
       "http://localhost:3000", // if you ever use CRA
       "http://localhost:8080",
+      "https://nxformsui.onrender.com",
     ],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -64,3 +65,4 @@ const port = Number(process.env.PORT || 4000);
 app.listen(port, () => {
   console.log(`API running on http://localhost:${port}`);
 });
+
