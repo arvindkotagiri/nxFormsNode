@@ -6,6 +6,10 @@ import authRoutes from "./routes/auth";
 import labelConfigRoutes from "./routes/labelConfigs";
 import determinationRoutes from "./routes/determination";
 import referenceRoutes from "./routes/reference";
+import eventsRoutes from "./routes/events";
+import outputsRoutes from "./routes/outputs";
+import logsRoutes from "./routes/logsRoutes";
+import dashboardRoutes from "./routes/dashboard";
 
 
 dotenv.config();
@@ -18,6 +22,8 @@ app.use(
       "http://localhost:5173", // Vite
       "http://127.0.0.1:5173",
       "http://localhost:3000", // if you ever use CRA
+      "http://localhost:8080",
+      "https://nxformsui.onrender.com", // your deployed frontend
     ],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -32,6 +38,10 @@ app.use("/api/auth", authRoutes);
 app.use("/api/reference", referenceRoutes);
 app.use("/api/label-configs", labelConfigRoutes);
 app.use("/api/label-determination", determinationRoutes);
+app.use("/api/events", eventsRoutes);
+app.use("/api/outputs", outputsRoutes);
+app.use("/api/logs", logsRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 
 const allowedOrigins = (process.env.CORS_ORIGINS || "*")
