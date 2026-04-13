@@ -24,6 +24,7 @@ app.use(
       "http://localhost:3000", // if you ever use CRA
       "http://localhost:8080",
       "https://nxformsui.onrender.com", // your deployed frontend
+      "http://3.236.229.60", // your deployed frontend IP
     ],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
