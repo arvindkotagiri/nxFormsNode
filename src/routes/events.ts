@@ -2,6 +2,7 @@ import { Router } from "express";
 import { pool } from "../db";
 import { v4 as uuidv4 } from "uuid";
 import { processOutputDetermination } from "../workers/outputWorker";
+import { requireUser } from "../middleware/auth";
 
 const router = Router();
 
@@ -43,8 +44,8 @@ router.get("/", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch events" });
   }
 });
-
-router.post("/trigger", async (req, res) => {
+ 
+router.post("/trigger", requireUser, async (req, res) => {
   const { context, entity_key, event_type, triggered_by, source_system, form } = req.body;
 
   if (!context || !entity_key || !event_type || !triggered_by || !source_system) {

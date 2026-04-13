@@ -16,7 +16,7 @@ export async function requireUser(req: AuthedRequest, res: Response, next: NextF
   try {
     const header = req.headers.authorization;
     if (!header?.startsWith("Bearer ")) {
-      return res.status(401).json({ detail: "Invalid token" });
+      return res.status(401).json({ error: "Invalid token" });
     }
 
     const token = header.slice("Bearer ".length).trim();
@@ -30,19 +30,19 @@ export async function requireUser(req: AuthedRequest, res: Response, next: NextF
     );
 
     const user = result.rows[0];
-    if (!user) return res.status(401).json({ detail: "User not found" });
+    if (!user) return res.status(401).json({ error: "User not found" });
 
     req.user = user;
     next();
   } catch (err: any) {
     const msg = err?.name === "TokenExpiredError" ? "Token expired" : "Invalid token";
-    return res.status(401).json({ detail: msg });
+    return res.status(401).json({ error: msg });
   }
 }
 
 export function requireConfigurator(req: AuthedRequest, res: Response, next: NextFunction) {
   if (req.user?.role !== "configurator") {
-    return res.status(403).json({ detail: "Configurator role required" });
+    return res.status(403).json({ error: "Configurator role required" });
   }
   next();
 }
