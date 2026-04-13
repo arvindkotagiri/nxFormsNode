@@ -19,7 +19,7 @@ interface LabelMaster {
   label_id: string;
   label_name: string;
   context: string;
-  output_mode: string;       // "HTML" | "ZPL"
+  output_mode: string;       // "html" | "zpl"
   html_code: string | null;
   zpl_code: string | null;
   field_mapping: Record<string, string> | null;
@@ -31,14 +31,14 @@ interface LabelMaster {
 
 function renderTemplate(template: LabelMaster, docData: Record<string, unknown>): string {
   // Pick the right template string based on output_mode
-  const raw = template.output_mode === "ZPL"
+  const raw = template.output_mode === "zpl"
     ? template.zpl_code ?? ""
     : template.html_code ?? "";
 
   if (!raw) {
     throw new Error(
       `label_master row for label_id=${template.label_id} has no ` +
-      `${template.output_mode === "ZPL" ? "zpl_code" : "html_code"}`
+      `${template.output_mode === "zpl" ? "zpl_code" : "html_code"}`
     );
   }
 
@@ -127,7 +127,7 @@ export async function processOutputAgent(outputId: string): Promise<void> {
     // For HTML / IPP:
     //   const printResponse = await fetch(`http://${output.printer}/print`, {
     //     method: "POST",
-    //     headers: { "Content-Type": template.output_mode === "ZPL" ? "text/plain" : "text/html" },
+    //     headers: { "Content-Type": template.output_mode === "zpl" ? "text/plain" : "text/html" },
     //     body: finalPayload,
     //     signal: AbortSignal.timeout(10_000),
     //   });
