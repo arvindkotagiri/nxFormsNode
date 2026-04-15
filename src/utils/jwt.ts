@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 
 const SECRET = process.env.JWT_SECRET || "label-config-secret-key-2024";
-const EXPIRES_IN = "24h"; // matches your FastAPI 24 hours
+const EXPIRES_IN = "72h"; // matches your FastAPI 24 hours
 
 export type JwtPayload = {
   sub: string;  // user id
