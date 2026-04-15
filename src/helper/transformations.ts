@@ -1,4 +1,4 @@
-const n2words: any = require("n2words");
+// const n2words: any = require("n2words");
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
 import customParseFormat from "dayjs/plugin/customParseFormat";
@@ -335,40 +335,40 @@ export const FORMAT_SCIENTIFIC = (
 // Number to Words
 //////////////////////////
 
-export const NUM_TO_WORDS = (
-  source: SourceData,
-  source_field: string,
-  lang = "en",
-  ordinal = false,
-  currency = false,
-  currency_code = "USD"
-) => {
-  const val = source[source_field];
+// export const NUM_TO_WORDS = (
+//   source: SourceData,
+//   source_field: string,
+//   lang = "en",
+//   ordinal = false,
+//   currency = false,
+//   currency_code = "USD"
+// ) => {
+//   const val = source[source_field];
 
-  if (typeof val !== "number") return val;
+//   if (typeof val !== "number") return val;
 
-  try {
-    if (currency) {
-      // n2words currency support
-      return n2words(val, {
-        lang,
-        currency: currency_code
-      });
-    }
+//   try {
+//     if (currency) {
+//       // n2words currency support
+//       return n2words(val, {
+//         lang,
+//         currency: currency_code
+//       });
+//     }
 
-    if (ordinal) {
-      return n2words(val, {
-        lang,
-        ordinal: true
-      });
-    }
+//     if (ordinal) {
+//       return n2words(val, {
+//         lang,
+//         ordinal: true
+//       });
+//     }
 
-    return n2words(val, { lang });
-  } catch (err) {
-    console.error("NUM_TO_WORDS error:", err);
-    return String(val);
-  }
-};
+//     return n2words(val, { lang });
+//   } catch (err) {
+//     console.error("NUM_TO_WORDS error:", err);
+//     return String(val);
+//   }
+// };
 
 //////////////////////////
 // Date Functions
