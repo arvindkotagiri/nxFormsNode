@@ -174,4 +174,58 @@ router.post("/trigger", requireUser, async (req, res) => {
   }
 });
 
+router.get("/:eventId/output", requireUser, async (req, res) => {
+  const { eventId } = req.params;
+
+  try {
+    const result = await pool.query(
+      `SELECT 
+         o.output_id,
+         o.status,
+         o.format,
+         o.document_json,
+         o.rendered_output,
+         o.error_message,
+         o.completed_at,
+         e.status as event_status,
+         e.error_message as event_error
+       FROM events e
+       LEFT JOIN outputs o ON o.event_id = e.event_id
+       WHERE e.event_id = $1
+       ORDER BY o.created_at ASC`,
+      [eventId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const eventStatus = result.rows[0].event_status;
+    const eventError = result.rows[0].event_error;
+
+    const outputs = result.rows
+      .filter((r) => r.output_id)
+      .map((r) => ({
+        output_id: r.output_id,
+        status: r.status,
+        format: r.format,
+        document_json: r.document_json,
+        rendered_output: r.rendered_output,   // ✅ included
+        error_message: r.error_message,
+        completed_at: r.completed_at,
+      }));
+
+    res.json({
+      event_id: eventId,
+      event_status: eventStatus,
+      event_error: eventError,
+      outputs,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch event output" });
+  }
+});
+
+
 export default router;
