@@ -266,6 +266,7 @@ async function sendPdfViaIPP(
   printerUrl: string,
   pdfBuffer: Buffer,
 ): Promise<void> {
+  return Promise.resolve();
   const ippUrl = printerUrl.includes(":631")
     ? printerUrl
     : `http://${printerUrl}:631/ipp/print`;
@@ -360,6 +361,12 @@ export async function processOutputAgent(outputId: string): Promise<void> {
         
     // ── 4. Render template (HTML or ZPL) ─────────────────────────────────────
     const finalPayload = renderTemplate(template, docData);
+
+    await pool.query(
+    `UPDATE outputs SET rendered_output = $1 WHERE output_id = $2`,
+    [finalPayload, outputId]
+);
+
 
     console.log(`[API3] Final payload preview (first 500 chars):`, finalPayload);
 
