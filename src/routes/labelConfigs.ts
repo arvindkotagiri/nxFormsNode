@@ -47,6 +47,16 @@ async function assertRefExists(table: string, id: string, label: string) {
   }
 }
 
+async function assertFormExists(table: string, id: string, label: string) {
+  console.log("Props", table, id, label);
+  const r = await pool.query(`SELECT 1 FROM ${table} WHERE label_id = $1 LIMIT 1`, [id]);
+  if (r.rowCount === 0) {
+    const err: any = new Error(`${label} not found: ${id}`);
+    err.statusCode = 400;
+    throw err;
+  }
+}
+
 async function validateRefsForCreate(body: z.infer<typeof labelConfigCreateSchema>) {
   // Only validate if values are provided (non-null/ non-empty)
   if (body.customer) await assertRefExists("ref_customers", body.customer, "Customer");
@@ -56,7 +66,7 @@ async function validateRefsForCreate(body: z.infer<typeof labelConfigCreateSchem
   if (body.warehouse) await assertRefExists("ref_warehouses", body.warehouse, "Warehouse");
   if (body.shipping_point) await assertRefExists("ref_shipping_points", body.shipping_point, "Shipping point");
   if (body.process_type) await assertRefExists("ref_process_types", body.process_type, "Process type");
-  if (body.label_id) await assertRefExists("ref_labels", body.label_id, "Label");
+  if (body.label_id) await assertFormExists("label_master", body.label_id, "Label");
 }
 
 async function validateRefsForUpdate(body: z.infer<typeof labelConfigUpdateSchema>) {
@@ -69,7 +79,7 @@ async function validateRefsForUpdate(body: z.infer<typeof labelConfigUpdateSchem
   if (body.warehouse !== undefined && body.warehouse) await assertRefExists("ref_warehouses", body.warehouse, "Warehouse");
   if (body.shipping_point !== undefined && body.shipping_point) await assertRefExists("ref_shipping_points", body.shipping_point, "Shipping point");
   if (body.process_type !== undefined && body.process_type) await assertRefExists("ref_process_types", body.process_type, "Process type");
-  if (body.label_id !== undefined && body.label_id) await assertRefExists("ref_labels", body.label_id, "Label");
+  if (body.label_id !== undefined && body.label_id) await assertFormExists("label_master", body.label_id, "Label");
 }
 
 /**
@@ -155,6 +165,7 @@ router.get("/", async (req, res) => {
 // router.post("/", requireUser, requireConfigurator, async (req: AuthedRequest, res) => {
 router.post("/", async (req: AuthedRequest, res) => {
   const parsed = labelConfigCreateSchema.safeParse(req.body);
+  console.log(parsed);
   if (!parsed.success) return res.status(400).json({ detail: parsed.error.flatten() });
 
   const body = parsed.data;
