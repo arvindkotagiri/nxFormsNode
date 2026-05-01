@@ -276,7 +276,14 @@
 
 import { pool } from "../db";
 import { v4 as uuidv4 } from "uuid";
-import { processOutputAgent } from "./printWorker";
+import { newprocessOutputAgent, processOutputAgent } from "./printWorker";
+
+const OUTPUT_FORMAT_MAP: Record<string, string[]> = {
+  html: ["HTML"],
+  zpl: ["ZPL"],
+  xdp: ["XDP"],
+  all: ["HTML", "ZPL", "XDP"],
+};
 
 // ── Main worker ────────────────────────────────────────────────────────────────
 
@@ -403,6 +410,234 @@ export async function processOutputDetermination(eventId: string): Promise<void>
   }
 }
 
+async function determineLabels(
+  docData: Record<string, string | null>
+): Promise<Array<{ label_id: string; label_name: string; printer: string | null }>> {
+  const {
+    customer,
+    plant,
+    company_code,
+    sales_organization,
+    warehouse,
+    shipping_point,
+    process_type,
+  } = docData;
+
+  const result = await pool.query(
+    `
+    SELECT
+      label_id,
+      label_name,
+      printer,
+      priority,
+      (
+        CASE WHEN customer IS NOT NULL AND customer = $1 THEN 1 ELSE 0 END +
+        CASE WHEN plant IS NOT NULL AND plant = $2 THEN 1 ELSE 0 END +
+        CASE WHEN company_code IS NOT NULL AND company_code = $3 THEN 1 ELSE 0 END +
+        CASE WHEN sales_organization IS NOT NULL AND sales_organization = $4 THEN 1 ELSE 0 END +
+        CASE WHEN warehouse IS NOT NULL AND warehouse = $5 THEN 1 ELSE 0 END +
+        CASE WHEN shipping_point IS NOT NULL AND shipping_point = $6 THEN 1 ELSE 0 END +
+        CASE WHEN process_type IS NOT NULL AND process_type = $7 THEN 1 ELSE 0 END
+      ) AS exact_matches
+    FROM label_configs
+    WHERE active = true
+      AND (valid_from IS NULL OR valid_from <= NOW())
+      AND (valid_to IS NULL OR valid_to >= NOW())
+
+      AND (customer IS NULL OR customer = $1)
+      AND NOT (customer IS NOT NULL AND $1 IS NULL)
+
+      AND (plant IS NULL OR plant = $2)
+      AND NOT (plant IS NOT NULL AND $2 IS NULL)
+
+      AND (company_code IS NULL OR company_code = $3)
+      AND NOT (company_code IS NOT NULL AND $3 IS NULL)
+
+      AND (sales_organization IS NULL OR sales_organization = $4)
+      AND NOT (sales_organization IS NOT NULL AND $4 IS NULL)
+
+      AND (warehouse IS NULL OR warehouse = $5)
+      AND NOT (warehouse IS NOT NULL AND $5 IS NULL)
+
+      AND (shipping_point IS NULL OR shipping_point = $6)
+      AND NOT (shipping_point IS NOT NULL AND $6 IS NULL)
+
+      AND (process_type IS NULL OR process_type = $7)
+      AND NOT (process_type IS NOT NULL AND $7 IS NULL)
+
+    ORDER BY exact_matches DESC, priority ASC
+    `,
+    [
+      customer,
+      plant,
+      company_code,
+      sales_organization,
+      warehouse,
+      shipping_point,
+      process_type,
+    ]
+  );
+
+  return result.rows;
+}
+
+// Simulate an API call to fetch payload data
+async function fetchPayloadDataFromAPI(context: string, entityKey: string): Promise<Record<string, string | null>> {
+  console.log(`[API2] Fetching payload data from API for context=${context}, entityKey=${entityKey}`);
+  
+  // Simulate network delay
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  // Mocked data — in a real scenario, you would call the external API here
+  return {
+    "Amount In Numbers": "10",
+    "Check Date": "04/14/2026",
+    "Recipient Name": "ABCD",
+    "Check Number": "20",
+    "Amount In Words": "Two Hundred Dollars",
+    "Vendor Address 1": "ABC 711"
+  };
+}
+
+async function fetchDocumentData(
+  entityKey: string,
+  context: string
+): Promise<Record<string, string | null>> {
+  // ── STUB ───────────────────────────────────────────────────────────────────
+  console.warn(
+    `[API2] STUB: fetchDocumentData called for entity_key=${entityKey} context=${context}. ` +
+    `Returning mock org fields. Replace with real API call when ready.`
+  );
+  return {
+    // customer: "C001",
+    // plant: "P001",
+    // company_code: null,
+    // sales_organization: null,
+    // warehouse: null,
+    // shipping_point: null,
+    // "process_type": "INBD",
+    "sales_organization": "SO20"
+  };
+  // ── END STUB ───────────────────────────────────────────────────────────────
+
+  // Uncomment when real endpoint is available:
+  // const url = `https://your-source-api/data/${context}/${entityKey}`;
+  // const response = await fetch(url, { /* auth headers */ });
+  // if (!response.ok) throw new Error(`Source API returned ${response.status}`);
+  // return response.json();
+}
+
+export async function newprocessOutputDetermination(eventId: string): Promise<void> {
+  const startTime = Date.now();
+
+  // ── 1. Read event ────────────────────────────────────────────────────────────
+  const eventResult = await pool.query(
+    `SELECT * FROM events WHERE event_id = $1`,
+    [eventId]
+  );
+  const event = eventResult.rows[0];
+
+  if (!event) {
+    console.error(`[API2] Event ${eventId} not found — aborting`);
+    return;
+  }
+
+  // ── 2. Duplicate / race guard ─────────────────────────────────────────────
+  if (event.status !== "Pending") {
+    console.info(`[API2] Event ${eventId} already "${event.status}" — skipping`);
+    return;
+  }
+
+  const claimed = await pool.query(
+    `UPDATE events SET status = 'Processing'
+     WHERE event_id = $1 AND status = 'Pending'
+     RETURNING event_id`,
+    [eventId]
+  );
+
+  if (claimed.rowCount === 0) {
+    console.info(`[API2] Event ${eventId} claimed by another worker — skipping`);
+    return;
+  }
+
+  try {
+    const { context, entity_key } = event;
+
+    // ── 3. Fetch document data ────────────────────────────────────────────────
+    let payloadData: Record<string, string | null> = {};
+
+    try {
+      payloadData = await fetchPayloadDataFromAPI(context, entity_key);
+    } catch (err) {
+      console.error(`[API2] Failed to fetch payload data from API:`, err);
+      await newfinalizeEvent(eventId, "Failed", "Failed to fetch payload data", startTime, 0);
+      return;
+    }
+
+    const orgData = await fetchDocumentData(entity_key, context);
+    const determinationInput = { ...orgData };
+
+    const matchedLabels = await determineLabels(determinationInput);
+
+    if (matchedLabels.length === 0) {
+      await newfinalizeEvent(eventId, "Failed", "No matching label configurations found", startTime, 0);
+      return;
+    }
+
+    // ── 4. Create one output row per matched label ────────────────────────────
+    let outputsCreated = 0;
+    const outputIds: string[] = [];
+
+    for (const label of matchedLabels) {
+      const formResult = await pool.query(
+        `SELECT output_mode FROM label_master WHERE label_name = $1 ORDER BY version DESC LIMIT 1`,
+        [label.label_name],
+      );
+
+      // output_mode is the format — "zpl", "html", "xdp", or "all"
+      // printWorker handles routing for all cases including "all"
+      const outputMode: string = formResult.rows[0]?.output_mode ?? "html";
+
+      const outputId = uuidv4();
+
+      await pool.query(
+        `INSERT INTO outputs
+         (output_id, event_id, form_id, printer, format, status, retries, created_at, document_json)
+         VALUES ($1, $2, $3, $4, $5, 'Pending', 0, NOW(), $6)`,
+        [
+          outputId,
+          eventId,
+          label.label_id,
+          label.printer ?? "PDF-EXPORT",
+          outputMode,          // format column mirrors output_mode directly
+          JSON.stringify(payloadData),
+        ],
+      );
+
+      outputsCreated++;
+      outputIds.push(outputId);
+
+      console.info(
+        `[API2] Output created: ${outputId} label=${label.label_name} format=${outputMode}`
+      );
+    }
+
+    // ── 5. Fire API3 agents (non-blocking) ───────────────────────────────────
+    for (const id of outputIds) {
+      newprocessOutputAgent(id).catch((err) => {
+        console.error(`[API2] API3 agent failed for output ${id}:`, err);
+      });
+    }
+
+    // ── 6. Finalize event ─────────────────────────────────────────────────────
+    await newfinalizeEvent(eventId, "Success", null, startTime, outputsCreated);
+
+  } catch (err: any) {
+    console.error(`[API2] Worker error for event ${eventId}:`, err.message);
+    await newfinalizeEvent(eventId, "Failed", err.message, startTime, 0);
+  }
+}
+
 // ── Helper ─────────────────────────────────────────────────────────────────────
 
 async function finalizeEvent(
@@ -429,4 +664,20 @@ async function finalizeEvent(
       [status, errorMessage, durationMs, outputsCount, eventId]
     );
   }
+}
+
+async function newfinalizeEvent(
+  eventId: string,
+  status: string,
+  errorMessage: string | null,
+  startTime: number,
+  outputsCount: number,
+): Promise<void> {
+  const durationMs = Date.now() - startTime;
+    await pool.query(
+      `UPDATE events
+       SET status = $1, error_message = $2, duration_ms = $3, outputs = $4
+       WHERE event_id = $5`,
+      [status, errorMessage, durationMs, outputsCount, eventId]
+    );
 }

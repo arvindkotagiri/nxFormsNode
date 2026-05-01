@@ -10,6 +10,20 @@ async function listRef(table: string) {
   return result.rows;
 }
 
+async function listForms(table: string) {
+  // table is internal constant in our code (not user input), safe to interpolate
+  const sql = `SELECT label_id as id, label_name as name FROM ${table} ORDER BY created_on DESC;`;
+  const result = await pool.query(sql);
+  return result.rows;
+}
+
+async function listFormsPrinters(table: string) {
+  // table is internal constant in our code (not user input), safe to interpolate
+  const sql = `SELECT id, name FROM ${table} ORDER BY created_on DESC;`;
+  const result = await pool.query(sql);
+  return result.rows;
+}
+
 router.get("/customers", async (_req, res) => {
   res.json(await listRef("ref_customers"));
 });
@@ -40,6 +54,14 @@ router.get("/process-types", async (_req, res) => {
 
 router.get("/labels", async (_req, res) => {
   res.json(await listRef("ref_labels"));
+});
+
+router.get("/all-labels", async (_req, res) => {
+  res.json(await listForms("label_master"));
+});
+
+router.get("/printers", async (_req, res) => {
+  res.json(await listFormsPrinters("printer_master"));
 });
 
 export default router;

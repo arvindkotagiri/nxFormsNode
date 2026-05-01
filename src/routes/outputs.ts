@@ -11,22 +11,23 @@ router.get("/", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        output_id,
-        event_id,
-        form_id,
-        printer,
-        format,
-        status,
-        retries,
-        duration
-      FROM outputs
-      ORDER BY output_id DESC
-      LIMIT 100
+        o.output_id,
+        e.event_number,
+        o.form_id,
+        o.printer,
+        o.format,
+        o.status,
+        o.retries,
+        o.duration
+      FROM outputs o
+      JOIN events e ON o.event_id = e.event_id  -- join on the primary/foreign key
+      ORDER BY o.output_id DESC
     `);
 
     const formatted = result.rows.map((r) => ({
       id: r.output_id,
       eventId: r.event_id,
+      evt_no: r.event_number,
       formId: r.form_id,
       printer: r.printer,
       format: r.format,
