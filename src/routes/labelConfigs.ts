@@ -28,6 +28,7 @@ const labelConfigCreateSchema = z.object({
 
   valid_from: z.string().optional().nullable(), // ISO date string expected from frontend
   valid_to: z.string().optional().nullable(),
+  printer: z.string().optional().nullable(),
 });
 
 const labelConfigUpdateSchema = labelConfigCreateSchema.partial();
@@ -67,6 +68,7 @@ async function validateRefsForCreate(body: z.infer<typeof labelConfigCreateSchem
   if (body.shipping_point) await assertRefExists("ref_shipping_points", body.shipping_point, "Shipping point");
   if (body.process_type) await assertRefExists("ref_process_types", body.process_type, "Process type");
   if (body.label_id) await assertFormExists("label_master", body.label_id, "Label");
+  if (body.printer) await assertRefExists("printer_master", body.printer, "Printer");
 }
 
 async function validateRefsForUpdate(body: z.infer<typeof labelConfigUpdateSchema>) {
@@ -80,6 +82,7 @@ async function validateRefsForUpdate(body: z.infer<typeof labelConfigUpdateSchem
   if (body.shipping_point !== undefined && body.shipping_point) await assertRefExists("ref_shipping_points", body.shipping_point, "Shipping point");
   if (body.process_type !== undefined && body.process_type) await assertRefExists("ref_process_types", body.process_type, "Process type");
   if (body.label_id !== undefined && body.label_id) await assertFormExists("label_master", body.label_id, "Label");
+  if (body.printer !== undefined && body.printer) await assertRefExists("printer_master", body.printer, "Printer");
 }
 
 /**
@@ -144,6 +147,7 @@ router.get("/", async (req, res) => {
       active,
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
+      printer,
       created_by,
       created_at::text,
       changed_by,
@@ -184,6 +188,7 @@ router.post("/", async (req: AuthedRequest, res) => {
       customer, plant, company_code, sales_organization, warehouse, shipping_point, process_type,
       number_of_labels, priority, active,
       valid_from, valid_to,
+      printer,
       created_by, changed_by
     )
     VALUES (
@@ -191,7 +196,8 @@ router.post("/", async (req: AuthedRequest, res) => {
       $3,$4,$5,$6,$7,$8,$9,
       $10,$11,$12,
       $13::date,$14::date,
-      $15,$16
+      $15,
+      $16,$17
     )
     RETURNING
       config_id::text,
@@ -209,6 +215,7 @@ router.post("/", async (req: AuthedRequest, res) => {
       active,
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
+      printer,
       created_by,
       created_at::text,
       changed_by,
@@ -230,6 +237,7 @@ router.post("/", async (req: AuthedRequest, res) => {
     body.active,
     body.valid_from ?? null,
     body.valid_to ?? null,
+    body.printer ?? null,
     nowUser,
     nowUser,
   ];
@@ -262,6 +270,7 @@ router.get("/:config_id", async (req, res) => {
       active,
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
+      printer,
       created_by,
       created_at::text,
       changed_by,
@@ -322,6 +331,7 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
   setField("active", body.active);
   setField("valid_from", body.valid_from ?? null, "date");
   setField("valid_to", body.valid_to ?? null, "date");
+  setField("printer", body.printer ?? null);
 
   // always update changed_by
   setParts.push(`changed_by = $${i++}`);

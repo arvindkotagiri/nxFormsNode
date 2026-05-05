@@ -366,7 +366,7 @@ async function getBrowser(): Promise<Browser> {
   return browserInstance;
 }
 
-async function htmlToPdf(htmlContent: string): Promise<Buffer> {
+export async function htmlToPdf(htmlContent: string): Promise<Buffer> {
   const browser = await getBrowser();
   const page = await browser.newPage();
   try {
