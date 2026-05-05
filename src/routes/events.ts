@@ -3,6 +3,8 @@ import { pool } from "../db";
 import { v4 as uuidv4 } from "uuid";
 import { processOutputDetermination, newprocessOutputDetermination } from "../workers/outputWorker";
 import { requireUser } from "../middleware/auth";
+import archiver from "archiver";
+import { htmlToPdf } from "../workers/printWorker";
 
 const router = Router();
 
@@ -175,6 +177,109 @@ router.get("/:eventId/output", requireUser, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch event output" });
+  }
+});
+
+/**
+ * GET /api/events/:eventId/status
+ * Lightweight poll endpoint — returns event status + output count
+ */
+router.get("/:eventId/status", requireUser, async (req, res) => {
+  const { eventId } = req.params;
+
+  try {
+    const result = await pool.query(
+      `SELECT e.status, e.outputs,
+              COUNT(o.output_id) FILTER (WHERE o.status = 'Success') AS completed_outputs
+       FROM events e
+       LEFT JOIN outputs o ON o.event_id = e.event_id
+       WHERE e.event_id = $1
+       GROUP BY e.status, e.outputs`,
+      [eventId]
+    );
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const { status, outputs, completed_outputs } = result.rows[0];
+
+    res.json({
+      status,
+      outputs: Number(outputs),
+      completed_outputs: Number(completed_outputs),
+      // All outputs done when completed matches total
+      all_ready: Number(completed_outputs) === Number(outputs) && Number(outputs) > 0,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch event status" });
+  }
+});
+
+/**
+ * GET /api/events/:eventId/download
+ * Zips all completed outputs for the event and streams to client
+ */
+router.get("/:eventId/download", requireUser, async (req, res) => {
+  const { eventId } = req.params;
+
+  try {
+    const result = await pool.query(
+      `SELECT output_id, form_id, format, rendered_output
+       FROM outputs
+       WHERE event_id = $1 AND status = 'Success'`,
+      [eventId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "No completed outputs found for this event" });
+    }
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="event-${eventId}-outputs.zip"`
+    );
+
+    const archive = archiver("zip", { zlib: { level: 6 } });
+    archive.pipe(res);
+
+    for (const output of result.rows) {
+      const { output_id, form_id, format, rendered_output } = output;
+      const baseName = `${form_id}_${output_id}`;
+
+      switch (format?.toLowerCase()) {
+        case "html": {
+          try {
+            const pdfBuffer = await htmlToPdf(rendered_output);
+            archive.append(pdfBuffer, { name: `${baseName}.pdf` });
+          } catch (err) {
+            console.error(`[Download] PDF conversion failed for ${output_id}:`, err);
+            // Fallback to raw HTML if PDF conversion fails
+            archive.append(rendered_output ?? "", { name: `${baseName}.html` });
+          }
+          break;
+        }
+        case "zpl": {
+          archive.append(rendered_output ?? "", { name: `${baseName}.zpl` });
+          break;
+        }
+        case "xdp": {
+          archive.append(rendered_output ?? "", { name: `${baseName}.xdp` });
+          break;
+        }
+        default: {
+          archive.append(rendered_output ?? "", { name: `${baseName}.txt` });
+          break;
+        }
+      }
+    }
+
+    await archive.finalize();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to generate download" });
   }
 });
 
