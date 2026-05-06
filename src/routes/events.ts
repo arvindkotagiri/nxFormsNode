@@ -48,50 +48,50 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.post("/trigger", requireUser, async (req, res) => {
-  const { context, entity_key, event_type, triggered_by, source_system, form, data } = req.body;
+// router.post("/trigger", requireUser, async (req, res) => {
+//   const { context, entity_key, event_type, triggered_by, source_system, form, data } = req.body;
 
-  if (!context || !entity_key || !event_type || !triggered_by || !source_system || !form) {
-    return res.status(400).json({ 
-      error: "Missing mandatory fields: context, entity_key, event_type, triggered_by, source_system, form" 
-    });
-  }
+//   if (!context || !entity_key || !event_type || !triggered_by || !source_system || !form) {
+//     return res.status(400).json({ 
+//       error: "Missing mandatory fields: context, entity_key, event_type, triggered_by, source_system, form" 
+//     });
+//   }
 
-  // ✅ FIX #1: Validate that data is provided
-  if (!data || typeof data !== 'object') {
-    return res.status(400).json({ 
-      error: "Missing or invalid data object" 
-    });
-  }
+//   // ✅ FIX #1: Validate that data is provided
+//   if (!data || typeof data !== 'object') {
+//     return res.status(400).json({ 
+//       error: "Missing or invalid data object" 
+//     });
+//   }
 
-  const eventId = uuidv4();
+//   const eventId = uuidv4();
 
-  try {
-    // ✅ FIX #2: Store the data payload as payload
-    await pool.query(
-      `INSERT INTO events 
-        (event_id, source, context, entity_key, event_type, triggered_by, form, payload, status, event_timestamp, outputs) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Pending', NOW(), 0)`,
-      [eventId, source_system, context, entity_key, event_type, triggered_by, form, JSON.stringify(data)]
-    );
+//   try {
+//     // ✅ FIX #2: Store the data payload as payload
+//     await pool.query(
+//       `INSERT INTO events 
+//         (event_id, source, context, entity_key, event_type, triggered_by, form, payload, status, event_timestamp, outputs) 
+//        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Pending', NOW(), 0)`,
+//       [eventId, source_system, context, entity_key, event_type, triggered_by, form, JSON.stringify(data)]
+//     );
 
-    // Trigger API 2 asynchronously 
-    processOutputDetermination(eventId).catch(err => {
-      console.error(`Background worker failed for ${eventId}:`, err);
-    });
+//     // Trigger API 2 asynchronously 
+//     processOutputDetermination(eventId).catch(err => {
+//       console.error(`Background worker failed for ${eventId}:`, err);
+//     });
 
-    res.status(202).json({
-      event_id: eventId,
-      status: "Accepted"
-    });
+//     res.status(202).json({
+//       event_id: eventId,
+//       status: "Accepted"
+//     });
 
-  } catch (err) {
-    console.error("Trigger insert failed:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+//   } catch (err) {
+//     console.error("Trigger insert failed:", err);
+//     res.status(500).json({ error: "Internal server error" });
+//   }
+// });
 
-router.post("/newtrigger", async (req, res) => {
+router.post("/trigger", async (req, res) => {
   const { context, entity_key, event_type, triggered_by, source_system, print_to_file } = req.body;
 
   if (!context || !entity_key || !event_type || !triggered_by || !source_system || !print_to_file) {

@@ -18,17 +18,10 @@ const app = express();
 
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173", // Vite
-      "http://127.0.0.1:5173",
-      "http://localhost:3000", // if you ever use CRA
-      "http://localhost:8080",
-      "https://nxformsui.onrender.com", // your deployed frontend
-      "http://3.236.229.60", // your deployed frontend IP
-    ],
+    origin: "*", // Allow any origin
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true, // ok even if you don't use cookies
+    credentials: false, // must be false if origin is "*"
   })
 );
 app.options(/.*/, cors());
@@ -45,16 +38,16 @@ app.use("/api/logs", logsRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 
 
-const allowedOrigins = (process.env.CORS_ORIGINS || "*")
-  .split(",")
-  .map((s) => s.trim());
+// const allowedOrigins = (process.env.CORS_ORIGINS || "*")
+//   .split(",")
+//   .map((s) => s.trim());
 
-app.use(
-  cors({
-    origin: allowedOrigins.includes("*") ? true : allowedOrigins,
-    credentials: true,
-  })
-);
+// app.use(
+//   cors({
+//     origin: allowedOrigins.includes("*") ? true : allowedOrigins,
+//     credentials: true,
+//   })
+// );
 
 // Health check (matches your FastAPI /api/health)
 app.get("/api/health", async (_req, res) => {
