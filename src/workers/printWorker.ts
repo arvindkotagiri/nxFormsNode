@@ -801,7 +801,20 @@ export async function newprocessOutputAgent(outputId: string): Promise<void> {
     // transports and only persist the rendered output to the DB.
     // The status flow (Success) is identical either way.
 
-    const printerHost = output.printer || "192.168.171.223";
+
+    // Get Printer Ip Address
+    const printerIP = await pool.query(
+      `SELECT ip_address
+       FROM printer_master
+       WHERE id = $1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [output.printer],
+    );
+    const printerHost: string = printerIP.rows[0]?.ip_address;
+    if (!printerHost) {
+      throw new Error(`Printer entry not found for id: ${output.printer}`);
+    }
 
     // Always render so rendered_output is saved regardless of print_to_file.
     const representativePayload =

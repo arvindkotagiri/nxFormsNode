@@ -516,7 +516,8 @@ async function fetchDocumentData(
     // warehouse: null,
     // shipping_point: null,
     // "process_type": "INBD",
-    "sales_organization": "SO20"
+    "sales_organization": "2000",
+    "warehouse": "2001"
   };
   // ── END STUB ───────────────────────────────────────────────────────────────
 
