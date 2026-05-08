@@ -28,29 +28,17 @@ app.options(/.*/, cors());
 
 
 app.use(express.json());
-app.use("/api/auth", authRoutes);
-app.use("/api/reference", referenceRoutes);
-app.use("/api/label-configs", labelConfigRoutes);
-app.use("/api/label-determination", determinationRoutes);
-app.use("/api/events", eventsRoutes);
-app.use("/api/outputs", outputsRoutes);
-app.use("/api/logs", logsRoutes);
-app.use("/api/dashboard", dashboardRoutes);
+app.use("/auth", authRoutes);
+app.use("/reference", referenceRoutes);
+app.use("/label-configs", labelConfigRoutes);
+app.use("/label-determination", determinationRoutes);
+app.use("/events", eventsRoutes);
+app.use("/outputs", outputsRoutes);
+app.use("/logs", logsRoutes);
+app.use("/dashboard", dashboardRoutes);
 
-
-// const allowedOrigins = (process.env.CORS_ORIGINS || "*")
-//   .split(",")
-//   .map((s) => s.trim());
-
-// app.use(
-//   cors({
-//     origin: allowedOrigins.includes("*") ? true : allowedOrigins,
-//     credentials: true,
-//   })
-// );
-
-// Health check (matches your FastAPI /api/health)
-app.get("/api/health", async (_req, res) => {
+// Health check (matches your FastAPI /health)
+app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("SELECT now() as now");
     res.json({ status: "healthy", timestamp: r.rows[0].now });
@@ -59,7 +47,7 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
-app.get("/api", (_req, res) => {
+app.get("/", (_req, res) => {
   res.json({ message: "Label Configuration & Determination API", version: "1.0.0" });
 });
 
