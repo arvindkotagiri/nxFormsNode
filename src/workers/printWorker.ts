@@ -38,7 +38,9 @@ function applyTransformations(
   source: Record<string, any>,
   mapping: any
 ) {
-  const sourceField = mapping.path;
+  console.log("moo",source,"baa",mapping)
+  // const sourceField = mapping.path;
+  const sourceField = mapping.path.substring(mapping.path.lastIndexOf('.') + 1);;
 
   // create a mutable working copy
   const tempSource = { ...source };
@@ -745,7 +747,7 @@ export async function processOutputAgent(outputId: string): Promise<void> {
 
 // ── NEW agent ──────────────────────────────────────────────────────────────────
 
-export async function newprocessOutputAgent(outputId: string): Promise<void> {
+export async function newprocessOutputAgent(outputId: string, simulate: boolean, props: any): Promise<void> {
   const startTime = Date.now();
 
   try {
@@ -801,21 +803,22 @@ export async function newprocessOutputAgent(outputId: string): Promise<void> {
     // transports and only persist the rendered output to the DB.
     // The status flow (Success) is identical either way.
 
-
+    console.log("output.printer", output.printer)
     // Get Printer Ip Address
     const printerIP = await pool.query(
       `SELECT ip_address
        FROM printer_master
-       WHERE id = $1
-       ORDER BY id DESC
+       WHERE name = $1
+       ORDER BY name DESC
        LIMIT 1`,
       [output.printer],
     );
     const printerHost: string = printerIP.rows[0]?.ip_address;
-    if (!printerHost) {
+    console.log("simulate", simulate)
+    if (!printerHost && simulate === false) {
       throw new Error(`Printer entry not found for id: ${output.printer}`);
     }
-
+    console.log("executed");
     // Always render so rendered_output is saved regardless of print_to_file.
     const representativePayload =
       template.output_mode === "html"

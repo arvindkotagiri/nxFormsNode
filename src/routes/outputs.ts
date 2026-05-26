@@ -20,7 +20,8 @@ router.get("/", async (req, res) => {
         o.retries,
         o.duration,
         o.error_message,
-        o.rendered_output
+        o.rendered_output,
+        o.output_number
       FROM outputs o
       JOIN events e ON o.event_id = e.event_id  -- join on the primary/foreign key
       ORDER BY o.output_id DESC
@@ -38,6 +39,7 @@ router.get("/", async (req, res) => {
       duration: r.duration ? `${r.duration}ms` : "–",
       errorMessage: r.error_message,
       renderedOutput: r.rendered_output,
+      outputNumber: r.output_number,
     }));
 
     res.json(formatted);

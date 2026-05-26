@@ -12,7 +12,7 @@ async function listRef(table: string) {
 
 async function listForms(table: string) {
   // table is internal constant in our code (not user input), safe to interpolate
-  const sql = `SELECT label_id as id, label_name as name FROM ${table} ORDER BY created_on DESC;`;
+  const sql = `SELECT label_id as id, label_name as name, context, field_mapping FROM ${table} ORDER BY created_on DESC;`;
   const result = await pool.query(sql);
   return result.rows;
 }

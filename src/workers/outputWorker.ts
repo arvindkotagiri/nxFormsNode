@@ -410,9 +410,94 @@ export async function processOutputDetermination(eventId: string): Promise<void>
   }
 }
 
+// async function determineLabels(
+//   docData: Record<string, string | null>
+// ): Promise<Array<{ label_id: string; label_name: string; printer: string | null }>> {
+//   const {
+//     customer,
+//     plant,
+//     company_code,
+//     sales_organization,
+//     warehouse,
+//     shipping_point,
+//     process_type,
+//   } = docData;
+
+//   const result = await pool.query(
+//     `
+//     SELECT
+//       label_id,
+//       label_name,
+//       printer,
+//       priority,
+//       (
+//         CASE WHEN customer IS NOT NULL AND customer = $1 THEN 1 ELSE 0 END +
+//         CASE WHEN plant IS NOT NULL AND plant = $2 THEN 1 ELSE 0 END +
+//         CASE WHEN company_code IS NOT NULL AND company_code = $3 THEN 1 ELSE 0 END +
+//         CASE WHEN sales_organization IS NOT NULL AND sales_organization = $4 THEN 1 ELSE 0 END +
+//         CASE WHEN warehouse IS NOT NULL AND warehouse = $5 THEN 1 ELSE 0 END +
+//         CASE WHEN shipping_point IS NOT NULL AND shipping_point = $6 THEN 1 ELSE 0 END +
+//         CASE WHEN process_type IS NOT NULL AND process_type = $7 THEN 1 ELSE 0 END
+//       ) AS exact_matches
+//     FROM label_configs
+//     WHERE active = true
+//       AND (valid_from IS NULL OR valid_from <= NOW())
+//       AND (valid_to IS NULL OR valid_to >= NOW())
+
+//       AND (customer IS NULL OR customer = $1)
+//       AND NOT (customer IS NOT NULL AND $1 IS NULL)
+
+//       AND (plant IS NULL OR plant = $2)
+//       AND NOT (plant IS NOT NULL AND $2 IS NULL)
+
+//       AND (company_code IS NULL OR company_code = $3)
+//       AND NOT (company_code IS NOT NULL AND $3 IS NULL)
+
+//       AND (sales_organization IS NULL OR sales_organization = $4)
+//       AND NOT (sales_organization IS NOT NULL AND $4 IS NULL)
+
+//       AND (warehouse IS NULL OR warehouse = $5)
+//       AND NOT (warehouse IS NOT NULL AND $5 IS NULL)
+
+//       AND (shipping_point IS NULL OR shipping_point = $6)
+//       AND NOT (shipping_point IS NOT NULL AND $6 IS NULL)
+
+//       AND (process_type IS NULL OR process_type = $7)
+//       AND NOT (process_type IS NOT NULL AND $7 IS NULL)
+
+//     ORDER BY exact_matches DESC, priority ASC
+//     `,
+//     [
+//       customer,
+//       plant,
+//       company_code,
+//       sales_organization,
+//       warehouse,
+//       shipping_point,
+//       process_type,
+//     ]
+//   );
+
+//   return result.rows;
+// }
+
 async function determineLabels(
-  docData: Record<string, string | null>
+  docData: Record<string, string | null>,
+  simulate: boolean,
+  props: Record<string, any>
 ): Promise<Array<{ label_id: string; label_name: string; printer: string | null }>> {
+  if (simulate) {
+    const result = await pool.query(
+      `
+      SELECT label_id, label_name
+      FROM label_master
+      WHERE label_id = $1
+      `,
+      [props.form_id]
+    );
+    return result.rows;
+  }
+  else {
   const {
     customer,
     plant,
@@ -426,46 +511,48 @@ async function determineLabels(
   const result = await pool.query(
     `
     SELECT
-      label_id,
-      label_name,
-      printer,
-      priority,
+      lc.label_id,
+      lc.label_name,
+      pm.name AS printer,
+      lc.priority,
       (
-        CASE WHEN customer IS NOT NULL AND customer = $1 THEN 1 ELSE 0 END +
-        CASE WHEN plant IS NOT NULL AND plant = $2 THEN 1 ELSE 0 END +
-        CASE WHEN company_code IS NOT NULL AND company_code = $3 THEN 1 ELSE 0 END +
-        CASE WHEN sales_organization IS NOT NULL AND sales_organization = $4 THEN 1 ELSE 0 END +
-        CASE WHEN warehouse IS NOT NULL AND warehouse = $5 THEN 1 ELSE 0 END +
-        CASE WHEN shipping_point IS NOT NULL AND shipping_point = $6 THEN 1 ELSE 0 END +
-        CASE WHEN process_type IS NOT NULL AND process_type = $7 THEN 1 ELSE 0 END
+        CASE WHEN lc.customer IS NOT NULL AND lc.customer = $1 THEN 1 ELSE 0 END +
+        CASE WHEN lc.plant IS NOT NULL AND lc.plant = $2 THEN 1 ELSE 0 END +
+        CASE WHEN lc.company_code IS NOT NULL AND lc.company_code = $3 THEN 1 ELSE 0 END +
+        CASE WHEN lc.sales_organization IS NOT NULL AND lc.sales_organization = $4 THEN 1 ELSE 0 END +
+        CASE WHEN lc.warehouse IS NOT NULL AND lc.warehouse = $5 THEN 1 ELSE 0 END +
+        CASE WHEN lc.shipping_point IS NOT NULL AND lc.shipping_point = $6 THEN 1 ELSE 0 END +
+        CASE WHEN lc.process_type IS NOT NULL AND lc.process_type = $7 THEN 1 ELSE 0 END
       ) AS exact_matches
-    FROM label_configs
-    WHERE active = true
-      AND (valid_from IS NULL OR valid_from <= NOW())
-      AND (valid_to IS NULL OR valid_to >= NOW())
+    FROM label_configs lc
+    LEFT JOIN printer_master pm
+      ON lc.printer = pm.id
+    WHERE lc.active = true
+      AND (lc.valid_from IS NULL OR lc.valid_from <= NOW())
+      AND (lc.valid_to IS NULL OR lc.valid_to >= NOW())
 
-      AND (customer IS NULL OR customer = $1)
-      AND NOT (customer IS NOT NULL AND $1 IS NULL)
+      AND (lc.customer IS NULL OR lc.customer = $1)
+      AND NOT (lc.customer IS NOT NULL AND $1 IS NULL)
 
-      AND (plant IS NULL OR plant = $2)
-      AND NOT (plant IS NOT NULL AND $2 IS NULL)
+      AND (lc.plant IS NULL OR lc.plant = $2)
+      AND NOT (lc.plant IS NOT NULL AND $2 IS NULL)
 
-      AND (company_code IS NULL OR company_code = $3)
-      AND NOT (company_code IS NOT NULL AND $3 IS NULL)
+      AND (lc.company_code IS NULL OR lc.company_code = $3)
+      AND NOT (lc.company_code IS NOT NULL AND $3 IS NULL)
 
-      AND (sales_organization IS NULL OR sales_organization = $4)
-      AND NOT (sales_organization IS NOT NULL AND $4 IS NULL)
+      AND (lc.sales_organization IS NULL OR lc.sales_organization = $4)
+      AND NOT (lc.sales_organization IS NOT NULL AND $4 IS NULL)
 
-      AND (warehouse IS NULL OR warehouse = $5)
-      AND NOT (warehouse IS NOT NULL AND $5 IS NULL)
+      AND (lc.warehouse IS NULL OR lc.warehouse = $5)
+      AND NOT (lc.warehouse IS NOT NULL AND $5 IS NULL)
 
-      AND (shipping_point IS NULL OR shipping_point = $6)
-      AND NOT (shipping_point IS NOT NULL AND $6 IS NULL)
+      AND (lc.shipping_point IS NULL OR lc.shipping_point = $6)
+      AND NOT (lc.shipping_point IS NOT NULL AND $6 IS NULL)
 
-      AND (process_type IS NULL OR process_type = $7)
-      AND NOT (process_type IS NOT NULL AND $7 IS NULL)
+      AND (lc.process_type IS NULL OR lc.process_type = $7)
+      AND NOT (lc.process_type IS NOT NULL AND $7 IS NULL)
 
-    ORDER BY exact_matches DESC, priority ASC
+    ORDER BY exact_matches DESC, lc.priority ASC
     `,
     [
       customer,
@@ -479,6 +566,7 @@ async function determineLabels(
   );
 
   return result.rows;
+  }
 }
 
 // Simulate an API call to fetch payload data
@@ -487,16 +575,37 @@ async function fetchPayloadDataFromAPI(context: string, entityKey: string): Prom
   
   // Simulate network delay
   await new Promise((resolve) => setTimeout(resolve, 100));
+  const result = await pool.query(
+    `
+    SELECT input_values
+    FROM simulation_master
+    WHERE id = $1
+    `,
+    [entityKey]
+  );
 
+  if (result.rows.length === 0) {
+    throw new Error(`No payload found for entityKey=${entityKey}`);
+  }
+
+  const inputValues = result.rows[0].input_values;
+
+  // If input_values is JSON/JSONB in Postgres
+  if (typeof inputValues === "object") {
+    return inputValues;
+  }
+
+  // If input_values is stored as TEXT
+  return JSON.parse(inputValues || "{}");
   // Mocked data — in a real scenario, you would call the external API here
-  return {
-    "Amount In Numbers": "10",
-    "Check Date": "04/14/2026",
-    "Recipient Name": "ABCD",
-    "Check Number": "20",
-    "Amount In Words": "Two Hundred Dollars",
-    "Vendor Address 1": "ABC 711"
-  };
+  // return {
+  //   "Amount In Numbers": "10",
+  //   "Check Date": "04/14/2026",
+  //   "Recipient Name": "ABCD",
+  //   "Check Number": "20",
+  //   "Amount In Words": "Two Hundred Dollars",
+  //   "Vendor Address 1": "ABC 711"
+  // };
 }
 
 async function fetchDocumentData(
@@ -528,7 +637,7 @@ async function fetchDocumentData(
   // return response.json();
 }
 
-export async function newprocessOutputDetermination(eventId: string): Promise<void> {
+export async function newprocessOutputDetermination(eventId: string, simulate: boolean, props: any): Promise<void> {
   const startTime = Date.now();
 
   // ── 1. Read event ────────────────────────────────────────────────────────────
@@ -560,7 +669,7 @@ export async function newprocessOutputDetermination(eventId: string): Promise<vo
     console.info(`[API2] Event ${eventId} claimed by another worker — skipping`);
     return;
   }
-
+  console.log("this",props)
   try {
     const { context, entity_key } = event;
 
@@ -578,8 +687,8 @@ export async function newprocessOutputDetermination(eventId: string): Promise<vo
     const orgData = await fetchDocumentData(entity_key, context);
     const determinationInput = { ...orgData };
 
-    const matchedLabels = await determineLabels(determinationInput);
-
+    const matchedLabels = await determineLabels(determinationInput, simulate, props);
+    console.log("here", matchedLabels);
     if (matchedLabels.length === 0) {
       await newfinalizeEvent(eventId, "Failed", "No matching label configurations found", startTime, 0);
       return;
@@ -625,7 +734,7 @@ export async function newprocessOutputDetermination(eventId: string): Promise<vo
 
     // ── 5. Fire API3 agents (non-blocking) ───────────────────────────────────
     for (const id of outputIds) {
-      newprocessOutputAgent(id).catch((err) => {
+      newprocessOutputAgent(id, simulate, props).catch((err) => {
         console.error(`[API2] API3 agent failed for output ${id}:`, err);
       });
     }

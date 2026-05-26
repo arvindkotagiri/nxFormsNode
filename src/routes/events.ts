@@ -92,8 +92,8 @@ router.get("/", async (req, res) => {
 // });
 
 router.post("/trigger", async (req, res) => {
-  const { context, entity_key, event_type, triggered_by, source_system, print_to_file } = req.body;
-
+  const props = req.body;
+  const { context, entity_key, event_type, triggered_by, source_system, print_to_file, simulate = false, form_id = ''} = req.body;
   if (!context || !entity_key || !event_type || !triggered_by || !source_system || !print_to_file) {
     return res.status(400).json({ 
       error: "Missing mandatory fields: context, entity_key, event_type, triggered_by, source_system, print_to_file" 
@@ -112,7 +112,7 @@ router.post("/trigger", async (req, res) => {
     );
 
     // Trigger API 2 asynchronously 
-    newprocessOutputDetermination(eventId).catch(err => {
+    newprocessOutputDetermination(eventId, simulate, props).catch(err => {
       console.error(`Background worker failed for ${eventId}:`, err);
     });
 
@@ -124,8 +124,8 @@ router.post("/trigger", async (req, res) => {
   } catch (err) {
     console.error("Trigger insert failed:", err);
     res.status(500).json({ error: "Internal server error" });
-  }
-});
+  }}
+);
 
 router.get("/:eventId/output", requireUser, async (req, res) => {
   const { eventId } = req.params;
