@@ -12,6 +12,7 @@ import logsRoutes from "./routes/logsRoutes";
 import dashboardRoutes from "./routes/dashboard";
 import contextsRoutes from "./routes/contexts";
 import simulationRoutes from "./routes/simulation";
+import imageRetentionRoutes from "./routes/imageRetention";
 
 
 dotenv.config();
@@ -40,6 +41,7 @@ app.use("/logs", logsRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/contexts", contextsRoutes);
 app.use("/simulation", simulationRoutes);
+app.use("/image-retention", imageRetentionRoutes);
 
 // Health check (matches your FastAPI /health)
 app.get("/health", async (_req, res) => {

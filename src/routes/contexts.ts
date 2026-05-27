@@ -13,7 +13,9 @@ router.get("/", async (req, res) => {
       SELECT
         id,
         name,
-        endpoint
+        endpoint,
+        entities,
+        fields
       FROM contexts
       ORDER BY name ASC
     `);
@@ -22,6 +24,8 @@ router.get("/", async (req, res) => {
       id: r.id,
       name: r.name,
       endpoint: r.endpoint,
+      entities: r.entities,
+      fields: r.fields,
     }));
 
     res.json(formatted);
