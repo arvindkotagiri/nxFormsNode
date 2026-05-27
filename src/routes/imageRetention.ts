@@ -58,7 +58,8 @@ router.get("/", requireUser, async (_req, res) => {
 
 router.get("/:id/image", requireUser, async (req, res) => {
   try {
-    const row = await getImageBlobById(req.params.id);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const row = await getImageBlobById(id);
     if (!row) {
       return res.status(404).json({ error: "Image not found" });
     }
@@ -73,7 +74,8 @@ router.get("/:id/image", requireUser, async (req, res) => {
 
 router.delete("/:id", requireUser, async (req, res) => {
   try {
-    const deleted = await deleteImageById(req.params.id);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const deleted = await deleteImageById(id);
     if (!deleted) {
       return res.status(404).json({ error: "Image not found" });
     }
