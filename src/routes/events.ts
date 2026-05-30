@@ -24,7 +24,8 @@ router.get("/", async (req, res) => {
         status,
         event_timestamp,
         duration_ms,
-        outputs
+        outputs,
+        triggered_by
       FROM events
       ORDER BY event_timestamp DESC
     `);
@@ -39,6 +40,7 @@ router.get("/", async (req, res) => {
       ts: r.event_timestamp,
       duration: r.duration_ms ? `${r.duration_ms}ms` : "–",
       outputs: r.outputs,
+      created_by: r.triggered_by,
     }));
 
     res.json(formatted);
