@@ -1,6 +1,7 @@
 // routes/logs.ts
 import { Router } from "express";
 import { pool } from "../db";
+import { AUDIT_SELECT_SQL } from "../utils/audit";
 
 const router = Router();
 
@@ -42,7 +43,7 @@ router.get("/", async (req, res) => {
         trace_id,
         metadata,
         to_char(event_timestamp, 'YYYY-MM-DD HH24:MI:SS') AS ts,
-        created_at
+        ${AUDIT_SELECT_SQL}
       FROM logs_audit
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY event_timestamp DESC
@@ -63,7 +64,10 @@ router.get("/", async (req, res) => {
       user: r.username,
       traceId: r.trace_id,
       metadata: r.metadata ?? null,
-      createdAt: r.created_at,
+      created_by: r.created_by,
+      created_on: r.created_on,
+      updated_by: r.updated_by,
+      updated_on: r.updated_on,
     }));
 
     // prevent caching (avoid 304 Not Modified)

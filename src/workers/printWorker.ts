@@ -713,7 +713,7 @@ export async function processOutputAgent(outputId: string): Promise<void> {
     const finalPayload = renderTemplate(template, docData);
 
     await pool.query(
-    `UPDATE outputs SET rendered_output = $1 WHERE output_id = $2`,
+    `UPDATE outputs SET rendered_output = $1, updated_by = 'system', updated_on = NOW() WHERE output_id = $2`,
     [finalPayload, outputId]
 );
 
@@ -829,7 +829,7 @@ export async function newprocessOutputAgent(outputId: string, simulate: boolean,
 
     // ── 5. Persist rendered output ────────────────────────────────────────────
     await pool.query(
-      `UPDATE outputs SET rendered_output = $1 WHERE output_id = $2`,
+      `UPDATE outputs SET rendered_output = $1, updated_by = 'system', updated_on = NOW() WHERE output_id = $2`,
       [representativePayload, outputId],
     );
 
@@ -898,7 +898,7 @@ async function handleFailure(
 ): Promise<void> {
   const result = await pool.query(
     `UPDATE outputs
-     SET retries = retries + 1, error_message = $1
+     SET retries = retries + 1, error_message = $1, updated_by = 'system', updated_on = NOW()
      WHERE output_id = $2
      RETURNING retries`,
     [errorMessage, outputId],
@@ -915,7 +915,7 @@ async function handleFailure(
     const durationMs = Date.now() - startTime;
     await pool.query(
       `UPDATE outputs
-       SET status = 'Pending', duration = $1, completed_at = NULL
+       SET status = 'Pending', duration = $1, completed_at = NULL, updated_by = 'system', updated_on = NOW()
        WHERE output_id = $2`,
       [durationMs, outputId],
     );
@@ -934,7 +934,8 @@ async function finalizeOutput(
   const durationMs = Date.now() - startTime;
   await pool.query(
     `UPDATE outputs
-     SET status = $1, error_message = $2, duration = $3, completed_at = NOW()
+     SET status = $1, error_message = $2, duration = $3, completed_at = NOW(),
+         updated_by = 'system', updated_on = NOW()
      WHERE output_id = $4`,
     [status, errorMessage, durationMs, outputId],
   );

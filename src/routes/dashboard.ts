@@ -11,36 +11,36 @@ router.get("/", async (_req, res) => {
     // 1️⃣ Total Outputs Today
     const totalOutTodayRes = await pool.query(`
       SELECT COUNT(*) AS total FROM outputs
-      WHERE created_at >= CURRENT_DATE
+      WHERE created_on >= CURRENT_DATE
     `);
     const totalOutputsToday = Number(totalOutTodayRes.rows[0].total);
 
     // 2️⃣ Processed Successfully
     const successRes = await pool.query(`
       SELECT COUNT(*) AS total FROM outputs
-      WHERE status = 'Success' AND created_at >= CURRENT_DATE
+      WHERE status = 'Success' AND created_on >= CURRENT_DATE
     `);
     const processedSuccessfully = Number(successRes.rows[0].total);
 
     // 3️⃣ Failed
     const failedRes = await pool.query(`
       SELECT COUNT(*) AS total FROM outputs
-      WHERE status = 'Failed' AND created_at >= CURRENT_DATE
+      WHERE status = 'Failed' AND created_on >= CURRENT_DATE
     `);
     const failed = Number(failedRes.rows[0].total);
 
     // 4️⃣ Pending
     const pendingRes = await pool.query(`
       SELECT COUNT(*) AS total FROM outputs
-      WHERE status = 'Pending' AND created_at >= CURRENT_DATE
+      WHERE status = 'Pending' AND created_on >= CURRENT_DATE
     `);
     const pending = Number(pendingRes.rows[0].total);
 
     // 5️⃣ Avg Processing Time (ms)
     const avgTimeRes = await pool.query(`
-      SELECT AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000) AS avg_ms
+      SELECT AVG(EXTRACT(EPOCH FROM (completed_at - created_on)) * 1000) AS avg_ms
       FROM outputs
-      WHERE completed_at IS NOT NULL AND created_at >= CURRENT_DATE
+      WHERE completed_at IS NOT NULL AND created_on >= CURRENT_DATE
     `);
     const avgProcessingTime = avgTimeRes.rows[0].avg_ms
       ? `${Math.round(avgTimeRes.rows[0].avg_ms)}ms`
@@ -80,10 +80,10 @@ router.get("/", async (_req, res) => {
 
     // Processing Time Trend (hourly avg)
     const timeTrendRes = await pool.query(`
-      SELECT date_trunc('hour', created_at) AS hour,
-             AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000) AS avg_ms
+      SELECT date_trunc('hour', created_on) AS hour,
+             AVG(EXTRACT(EPOCH FROM (completed_at - created_on)) * 1000) AS avg_ms
       FROM outputs
-      WHERE created_at >= CURRENT_DATE AND completed_at IS NOT NULL
+      WHERE created_on >= CURRENT_DATE AND completed_at IS NOT NULL
       GROUP BY hour
       ORDER BY hour
     `);
@@ -97,7 +97,7 @@ router.get("/", async (_req, res) => {
       SELECT printer, 
              COUNT(*) FILTER (WHERE status IS NOT NULL) * 100.0 / COUNT(*) AS util
       FROM outputs
-      WHERE created_at >= CURRENT_DATE
+      WHERE created_on >= CURRENT_DATE
       GROUP BY printer
       ORDER BY util DESC
     `);

@@ -1,25 +1,23 @@
 import { Router } from "express";
 import { pool } from "../db";
+import { AUDIT_SELECT_SQL } from "../utils/audit";
 
 const router = Router();
 
 async function listRef(table: string) {
-  // table is internal constant in our code (not user input), safe to interpolate
-  const sql = `SELECT id, name, description FROM ${table} ORDER BY id ASC;`;
+  const sql = `SELECT id, name, description, ${AUDIT_SELECT_SQL} FROM ${table} ORDER BY id ASC;`;
   const result = await pool.query(sql);
   return result.rows;
 }
 
 async function listForms(table: string) {
-  // table is internal constant in our code (not user input), safe to interpolate
-  const sql = `SELECT label_id as id, label_name as name, context, field_mapping FROM ${table} ORDER BY created_on DESC;`;
+  const sql = `SELECT label_id as id, label_name as name, context, field_mapping, ${AUDIT_SELECT_SQL} FROM ${table} ORDER BY created_on DESC NULLS LAST;`;
   const result = await pool.query(sql);
   return result.rows;
 }
 
 async function listFormsPrinters(table: string) {
-  // table is internal constant in our code (not user input), safe to interpolate
-  const sql = `SELECT id, name FROM ${table} ORDER BY created_on DESC;`;
+  const sql = `SELECT id, name, ${AUDIT_SELECT_SQL} FROM ${table} ORDER BY created_on DESC NULLS LAST;`;
   const result = await pool.query(sql);
   return result.rows;
 }

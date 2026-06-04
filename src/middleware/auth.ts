@@ -8,7 +8,10 @@ export type AuthedRequest = Request & {
     email: string;
     name: string;
     role: "viewer" | "configurator";
-    created_at: string;
+    created_by: string | null;
+    created_on: string;
+    updated_by: string | null;
+    updated_on: string | null;
   };
 };
 
@@ -23,7 +26,7 @@ export async function requireUser(req: AuthedRequest, res: Response, next: NextF
     const payload = verifyToken(token);
 
     const result = await pool.query(
-      `SELECT id::text, email, name, role, created_at::text
+      `SELECT id::text, email, name, role, created_by, created_on::text, updated_by, updated_on::text
        FROM users
        WHERE id = $1`,
       [payload.sub]

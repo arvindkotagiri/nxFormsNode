@@ -4,6 +4,7 @@ import { pool } from "../db";
 import { hashPassword, verifyPassword } from "../utils/password";
 import { signToken } from "../utils/jwt";
 import { requireUser, AuthedRequest } from "../middleware/auth";
+import { auditActor, AUDIT_SELECT_SQL } from "../utils/audit";
 
 const router = Router();
 
@@ -28,7 +29,10 @@ function tokenResponse(user: any, accessToken: string) {
       email: user.email,
       name: user.name,
       role: user.role,
-      created_at: user.created_at,
+      created_by: user.created_by,
+      created_on: user.created_on,
+      updated_by: user.updated_by,
+      updated_on: user.updated_on,
     },
   };
 }
@@ -45,11 +49,13 @@ router.post("/register", async (req, res) => {
 
   const passwordHash = await hashPassword(password);
 
+  const actor = auditActor(req, email);
+
   const insert = await pool.query(
-    `INSERT INTO users (email, name, role, password_hash)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id::text, email, name, role, created_at::text`,
-    [email, name, role, passwordHash]
+    `INSERT INTO users (email, name, role, password_hash, created_by, created_on, updated_by, updated_on)
+     VALUES ($1, $2, $3, $4, $5, NOW(), $5, NOW())
+     RETURNING id::text, email, name, role, ${AUDIT_SELECT_SQL}`,
+    [email, name, role, passwordHash, actor]
   );
 
   const user = insert.rows[0];
@@ -66,7 +72,7 @@ router.post("/login", async (req, res) => {
   const { email, password } = parsed.data;
 
   const result = await pool.query(
-    `SELECT id::text, email, name, role, created_at::text, password_hash
+    `SELECT id::text, email, name, role, password_hash, ${AUDIT_SELECT_SQL}
      FROM users
      WHERE email = $1`,
     [email]

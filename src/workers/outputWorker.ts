@@ -374,8 +374,8 @@ export async function processOutputDetermination(eventId: string): Promise<void>
 
       await pool.query(
         `INSERT INTO outputs
-        (output_id, event_id, form_id, printer, format, status, retries, created_at, document_json)
-       VALUES ($1, $2, $3, $4, $5, 'Pending', 0, NOW(), $6)`,
+        (output_id, event_id, form_id, printer, format, status, retries, created_by, created_on, updated_by, updated_on, document_json)
+       VALUES ($1, $2, $3, $4, $5, 'Pending', 0, 'system', NOW(), 'system', NOW(), $6)`,
         [
           outputId,
           eventId,
@@ -712,8 +712,8 @@ export async function newprocessOutputDetermination(eventId: string, simulate: b
 
       await pool.query(
         `INSERT INTO outputs
-         (output_id, event_id, form_id, printer, format, status, retries, created_at, document_json)
-         VALUES ($1, $2, $3, $4, $5, 'Pending', 0, NOW(), $6)`,
+         (output_id, event_id, form_id, printer, format, status, retries, created_by, created_on, updated_by, updated_on, document_json)
+         VALUES ($1, $2, $3, $4, $5, 'Pending', 0, 'system', NOW(), 'system', NOW(), $6)`,
         [
           outputId,
           eventId,
@@ -762,14 +762,16 @@ async function finalizeEvent(
   if (formId) {
     await pool.query(
       `UPDATE events
-       SET status = $1, error_message = $2, duration_ms = $3, outputs = $4, form = $5
+       SET status = $1, error_message = $2, duration_ms = $3, outputs = $4, form = $5,
+           updated_by = 'system', updated_on = NOW()
        WHERE event_id = $6`,
       [status, errorMessage, durationMs, outputsCount, formId, eventId]
     );
   } else {
     await pool.query(
       `UPDATE events
-       SET status = $1, error_message = $2, duration_ms = $3, outputs = $4
+       SET status = $1, error_message = $2, duration_ms = $3, outputs = $4,
+           updated_by = 'system', updated_on = NOW()
        WHERE event_id = $5`,
       [status, errorMessage, durationMs, outputsCount, eventId]
     );
@@ -786,7 +788,8 @@ async function newfinalizeEvent(
   const durationMs = Date.now() - startTime;
     await pool.query(
       `UPDATE events
-       SET status = $1, error_message = $2, duration_ms = $3, outputs = $4
+       SET status = $1, error_message = $2, duration_ms = $3, outputs = $4,
+           updated_by = 'system', updated_on = NOW()
        WHERE event_id = $5`,
       [status, errorMessage, durationMs, outputsCount, eventId]
     );

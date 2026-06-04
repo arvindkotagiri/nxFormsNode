@@ -5,6 +5,7 @@ import { processOutputDetermination, newprocessOutputDetermination } from "../wo
 import { requireUser } from "../middleware/auth";
 import archiver from "archiver";
 import { htmlToPdf } from "../workers/printWorker";
+import { AUDIT_SELECT_SQL, auditSelectSql } from "../utils/audit";
 
 const router = Router();
 
@@ -25,7 +26,8 @@ router.get("/", async (req, res) => {
         event_timestamp,
         duration_ms,
         outputs,
-        triggered_by
+        triggered_by,
+        ${AUDIT_SELECT_SQL}
       FROM events
       ORDER BY event_timestamp DESC
     `);
@@ -41,6 +43,9 @@ router.get("/", async (req, res) => {
       duration: r.duration_ms ? `${r.duration_ms}ms` : "–",
       outputs: r.outputs,
       created_by: r.triggered_by,
+      created_on: r.created_on,
+      updated_by: r.updated_by,
+      updated_on: r.updated_on,
     }));
 
     res.json(formatted);
@@ -108,8 +113,9 @@ router.post("/trigger", async (req, res) => {
     // ✅ FIX #2: Store the data payload as payload
     await pool.query(
       `INSERT INTO events 
-        (event_id, source, context, entity_key, event_type, triggered_by, print_to_file, status, event_timestamp, outputs) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', NOW(), 0)`,
+        (event_id, source, context, entity_key, event_type, triggered_by, print_to_file, status, event_timestamp, outputs,
+         created_by, created_on, updated_by, updated_on) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', NOW(), 0, $6, NOW(), $6, NOW())`,
       [eventId, source_system, context, entity_key, event_type, triggered_by, print_to_file]
     );
 
@@ -142,12 +148,17 @@ router.get("/:eventId/output", requireUser, async (req, res) => {
          o.rendered_output,
          o.error_message,
          o.completed_at,
+         ${auditSelectSql("o")},
          e.status as event_status,
-         e.error_message as event_error
+         e.error_message as event_error,
+         e.created_by as event_created_by,
+         e.created_on::text as event_created_on,
+         e.updated_by as event_updated_by,
+         e.updated_on::text as event_updated_on
        FROM events e
        LEFT JOIN outputs o ON o.event_id = e.event_id
        WHERE e.event_id = $1
-       ORDER BY o.created_at ASC`,
+       ORDER BY o.created_on ASC`,
       [eventId]
     );
 
@@ -168,12 +179,20 @@ router.get("/:eventId/output", requireUser, async (req, res) => {
         rendered_output: r.rendered_output,   // ✅ included
         error_message: r.error_message,
         completed_at: r.completed_at,
+        created_by: r.created_by,
+        created_on: r.created_on,
+        updated_by: r.updated_by,
+        updated_on: r.updated_on,
       }));
 
     res.json({
       event_id: eventId,
       event_status: eventStatus,
       event_error: eventError,
+      created_by: result.rows[0].event_created_by,
+      created_on: result.rows[0].event_created_on,
+      updated_by: result.rows[0].event_updated_by,
+      updated_on: result.rows[0].event_updated_on,
       outputs,
     });
   } catch (err) {

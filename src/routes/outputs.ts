@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db";
+import { auditSelectSql } from "../utils/audit";
 
 const router = Router();
 
@@ -12,6 +13,7 @@ router.get("/", async (req, res) => {
     const result = await pool.query(`
       SELECT
         o.output_id,
+        o.event_id,
         e.event_number,
         o.form_id,
         o.printer,
@@ -21,9 +23,10 @@ router.get("/", async (req, res) => {
         o.duration,
         o.error_message,
         o.rendered_output,
-        o.output_number
+        o.output_number,
+        ${auditSelectSql("o")}
       FROM outputs o
-      JOIN events e ON o.event_id = e.event_id  -- join on the primary/foreign key
+      JOIN events e ON o.event_id = e.event_id
       ORDER BY o.output_id DESC
     `);
 
@@ -40,6 +43,10 @@ router.get("/", async (req, res) => {
       errorMessage: r.error_message,
       renderedOutput: r.rendered_output,
       outputNumber: r.output_number,
+      created_by: r.created_by,
+      created_on: r.created_on,
+      updated_by: r.updated_by,
+      updated_on: r.updated_on,
     }));
 
     res.json(formatted);

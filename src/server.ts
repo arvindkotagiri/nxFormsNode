@@ -13,6 +13,7 @@ import dashboardRoutes from "./routes/dashboard";
 import contextsRoutes from "./routes/contexts";
 import simulationRoutes from "./routes/simulation";
 import imageRetentionRoutes from "./routes/imageRetention";
+import { ensureAuditColumns } from "./db/ensureAuditColumns";
 
 
 dotenv.config();
@@ -58,6 +59,11 @@ app.get("/", (_req, res) => {
 });
 
 const port = Number(process.env.PORT || 4000);
+
+ensureAuditColumns().catch((err) => {
+  console.error("[db] Failed to ensure audit columns:", err);
+});
+
 app.listen(port, () => {
   console.log(`API running on http://localhost:${port}`);
 });

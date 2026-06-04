@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db";
+import { AUDIT_SELECT_SQL } from "../utils/audit";
 
 const router = Router();
 
@@ -15,7 +16,8 @@ router.get("/", async (req, res) => {
         name,
         endpoint,
         entities,
-        fields
+        fields,
+        ${AUDIT_SELECT_SQL}
       FROM contexts
       ORDER BY name ASC
     `);
@@ -26,6 +28,10 @@ router.get("/", async (req, res) => {
       endpoint: r.endpoint,
       entities: r.entities,
       fields: r.fields,
+      created_by: r.created_by,
+      created_on: r.created_on,
+      updated_by: r.updated_by,
+      updated_on: r.updated_on,
     }));
 
     res.json(formatted);

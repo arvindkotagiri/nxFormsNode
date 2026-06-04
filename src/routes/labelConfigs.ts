@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../db";
 // import { requireUser, requireConfigurator, AuthedRequest } from "../middleware/auth";
 import { requireConfigurator, AuthedRequest } from "../middleware/auth";
+import { auditActor, AUDIT_SELECT_SQL } from "../utils/audit";
 
 const router = Router();
 
@@ -148,10 +149,7 @@ router.get("/", async (req, res) => {
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
-      created_by,
-      created_at::text,
-      changed_by,
-      changed_at::text
+      ${AUDIT_SELECT_SQL}
     FROM label_configs
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY priority ASC
@@ -173,7 +171,7 @@ router.post("/", async (req: AuthedRequest, res) => {
   if (!parsed.success) return res.status(400).json({ detail: parsed.error.flatten() });
 
   const body = parsed.data;
-  const nowUser = req.user?.name || "Unknown";
+  const nowUser = auditActor(req, "Unknown");
 
   // STEP 7: reference validation
   try {
@@ -189,7 +187,7 @@ router.post("/", async (req: AuthedRequest, res) => {
       number_of_labels, priority, active,
       valid_from, valid_to,
       printer,
-      created_by, changed_by
+      created_by, created_on, updated_by, updated_on
     )
     VALUES (
       $1,$2,
@@ -197,7 +195,7 @@ router.post("/", async (req: AuthedRequest, res) => {
       $10,$11,$12,
       $13::date,$14::date,
       $15,
-      $16,$17
+      $16, NOW(), $17, NOW()
     )
     RETURNING
       config_id::text,
@@ -216,10 +214,7 @@ router.post("/", async (req: AuthedRequest, res) => {
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
-      created_by,
-      created_at::text,
-      changed_by,
-      changed_at::text;
+      ${AUDIT_SELECT_SQL};
   `;
 
   const values = [
@@ -271,10 +266,7 @@ router.get("/:config_id", async (req, res) => {
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
-      created_by,
-      created_at::text,
-      changed_by,
-      changed_at::text
+      ${AUDIT_SELECT_SQL}
     FROM label_configs
     WHERE config_id = $1::uuid
     LIMIT 1;
@@ -296,7 +288,7 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
   if (!parsed.success) return res.status(400).json({ detail: parsed.error.flatten() });
 
   const body = parsed.data;
-  const nowUser = req.user?.name || "Unknown";
+  const nowUser = auditActor(req, "Unknown");
 
   // STEP 7: reference validation for fields being updated
   try {
@@ -333,9 +325,9 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
   setField("valid_to", body.valid_to ?? null, "date");
   setField("printer", body.printer ?? null);
 
-  // always update changed_by
-  setParts.push(`changed_by = $${i++}`);
+  setParts.push(`updated_by = $${i++}`);
   values.push(nowUser);
+  setParts.push(`updated_on = NOW()`);
 
   if (setParts.length === 0) {
     return res.status(400).json({ detail: "No fields provided to update" });
@@ -363,10 +355,8 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
       active,
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
-      created_by,
-      created_at::text,
-      changed_by,
-      changed_at::text;
+      printer,
+      ${AUDIT_SELECT_SQL};
   `;
 
   const result = await pool.query(sql, values);
