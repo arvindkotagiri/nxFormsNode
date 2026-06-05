@@ -6,6 +6,7 @@ import { requireUser } from "../middleware/auth";
 import archiver from "archiver";
 import { htmlToPdf } from "../workers/printWorker";
 import { AUDIT_SELECT_SQL, auditSelectSql } from "../utils/audit";
+import { buildEncryptedPayload, maybeDecryptPayload } from "../utils/dataEncryption";
 
 const router = Router();
 
@@ -27,26 +28,37 @@ router.get("/", async (req, res) => {
         duration_ms,
         outputs,
         triggered_by,
+        encrypted_payload,
         ${AUDIT_SELECT_SQL}
       FROM events
       ORDER BY event_timestamp DESC
     `);
 
-    const formatted = result.rows.map((r) => ({
-      id: r.event_id,
-      evt_no: r.event_number,
-      source: r.source,
-      context: r.context,
-      form: r.form,
-      status: r.status,
-      ts: r.event_timestamp,
-      duration: r.duration_ms ? `${r.duration_ms}ms` : "–",
-      outputs: r.outputs,
-      created_by: r.triggered_by,
-      created_on: r.created_on,
-      updated_by: r.updated_by,
-      updated_on: r.updated_on,
-    }));
+    const formatted = result.rows.map((r) => {
+      let decryptedPayload: any = null;
+      if (r.encrypted_payload) {
+        try {
+          decryptedPayload = maybeDecryptPayload(r.encrypted_payload) as any;
+        } catch (err) {
+          console.warn("Failed to decrypt event payload:", err);
+        }
+      }
+      return {
+        id: r.event_id,
+        evt_no: r.event_number,
+        source: decryptedPayload?.source ?? r.source,
+        context: decryptedPayload?.context ?? r.context,
+        form: decryptedPayload?.form ?? r.form,
+        status: decryptedPayload?.status ?? r.status,
+        ts: decryptedPayload?.event_timestamp ?? r.event_timestamp,
+        duration: r.duration_ms ? `${r.duration_ms}ms` : "–",
+        outputs: decryptedPayload?.outputs ?? r.outputs,
+        created_by: r.triggered_by,
+        created_on: r.created_on,
+        updated_by: r.updated_by,
+        updated_on: r.updated_on,
+      };
+    });
 
     res.json(formatted);
   } catch (err) {
@@ -111,12 +123,27 @@ router.post("/trigger", async (req, res) => {
 
   try {
     // ✅ FIX #2: Store the data payload as payload
+    const encryptedPayload = buildEncryptedPayload({
+      event_id: eventId,
+      source: source_system,
+      context,
+      entity_key,
+      event_type,
+      triggered_by,
+      print_to_file,
+      status: 'Pending',
+      event_timestamp: new Date().toISOString(),
+      outputs: 0,
+      created_by: triggered_by,
+      updated_by: triggered_by,
+    });
+
     await pool.query(
       `INSERT INTO events 
         (event_id, source, context, entity_key, event_type, triggered_by, print_to_file, status, event_timestamp, outputs,
-         created_by, created_on, updated_by, updated_on) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', NOW(), 0, $6, NOW(), $6, NOW())`,
-      [eventId, source_system, context, entity_key, event_type, triggered_by, print_to_file]
+         created_by, created_on, updated_by, updated_on, encrypted_payload) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', NOW(), 0, $6, NOW(), $6, NOW(), $8)`,
+      [eventId, source_system, context, entity_key, event_type, triggered_by, print_to_file, encryptedPayload]
     );
 
     // Trigger API 2 asynchronously 
@@ -146,10 +173,12 @@ router.get("/:eventId/output", requireUser, async (req, res) => {
          o.format,
          o.document_json,
          o.rendered_output,
+         o.encrypted_payload as output_encrypted_payload,
          o.error_message,
          o.completed_at,
          ${auditSelectSql("o")},
          e.status as event_status,
+         e.encrypted_payload as event_encrypted_payload,
          e.error_message as event_error,
          e.created_by as event_created_by,
          e.created_on::text as event_created_on,
@@ -166,24 +195,46 @@ router.get("/:eventId/output", requireUser, async (req, res) => {
       return res.status(404).json({ error: "Event not found" });
     }
 
-    const eventStatus = result.rows[0].event_status;
-    const eventError = result.rows[0].event_error;
+    let eventStatus = result.rows[0].event_status;
+    let eventError = result.rows[0].event_error;
+
+    if (result.rows[0].event_encrypted_payload) {
+      try {
+        const decryptedEvent = maybeDecryptPayload(result.rows[0].event_encrypted_payload) as any;
+        eventStatus = decryptedEvent?.status ?? eventStatus;
+        eventError = decryptedEvent?.error_message ?? eventError;
+      } catch (err) {
+        console.warn(`Failed to decrypt event payload for ${eventId}:`, err);
+      }
+    }
 
     const outputs = result.rows
       .filter((r) => r.output_id)
-      .map((r) => ({
-        output_id: r.output_id,
-        status: r.status,
-        format: r.format,
-        document_json: r.document_json,
-        rendered_output: r.rendered_output,   // ✅ included
-        error_message: r.error_message,
-        completed_at: r.completed_at,
-        created_by: r.created_by,
-        created_on: r.created_on,
-        updated_by: r.updated_by,
-        updated_on: r.updated_on,
-      }));
+      .map((r) => {
+        let rendered_output = r.rendered_output;
+        if (r.output_encrypted_payload) {
+          try {
+            const decrypted = maybeDecryptPayload(r.output_encrypted_payload) as any;
+            rendered_output = decrypted?.rendered_output ?? rendered_output;
+          } catch (err) {
+            console.warn(`Failed to decrypt output payload for ${r.output_id}:`, err);
+          }
+        }
+
+        return {
+          output_id: r.output_id,
+          status: r.status,
+          format: r.format,
+          document_json: r.document_json,
+          rendered_output,
+          error_message: r.error_message,
+          completed_at: r.completed_at,
+          created_by: r.created_by,
+          created_on: r.created_on,
+          updated_by: r.updated_by,
+          updated_on: r.updated_on,
+        };
+      });
 
     res.json({
       event_id: eventId,
@@ -247,7 +298,7 @@ router.get("/:eventId/download", requireUser, async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT output_id, form_id, format, rendered_output
+      `SELECT output_id, form_id, format, rendered_output, encrypted_payload
        FROM outputs
        WHERE event_id = $1 AND status = 'Success'`,
       [eventId]
@@ -267,8 +318,18 @@ router.get("/:eventId/download", requireUser, async (req, res) => {
     archive.pipe(res);
 
     for (const output of result.rows) {
-      const { output_id, form_id, format, rendered_output } = output;
+      const { output_id, form_id, format, rendered_output, encrypted_payload } = output;
       const baseName = `${form_id}_${output_id}`;
+
+      let decryptedOutput = rendered_output;
+      if (encrypted_payload) {
+        try {
+          const decrypted = maybeDecryptPayload(encrypted_payload) as any;
+          decryptedOutput = decrypted?.rendered_output ?? decryptedOutput;
+        } catch (err) {
+          console.warn(`Failed to decrypt output ${output_id}:`, err);
+        }
+      }
 
       switch (format?.toLowerCase()) {
         case "html": {

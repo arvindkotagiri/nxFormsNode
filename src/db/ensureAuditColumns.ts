@@ -53,7 +53,8 @@ async function addAuditColumns(table: string): Promise<void> {
       ADD COLUMN IF NOT EXISTS created_by TEXT,
       ADD COLUMN IF NOT EXISTS created_on TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS updated_by TEXT,
-      ADD COLUMN IF NOT EXISTS updated_on TIMESTAMPTZ
+      ADD COLUMN IF NOT EXISTS updated_on TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS encrypted_payload TEXT
   `);
 }
 

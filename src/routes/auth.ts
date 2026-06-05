@@ -5,6 +5,7 @@ import { hashPassword, verifyPassword } from "../utils/password";
 import { signToken } from "../utils/jwt";
 import { requireUser, AuthedRequest } from "../middleware/auth";
 import { auditActor, AUDIT_SELECT_SQL } from "../utils/audit";
+import { buildEncryptedPayload, maybeDecryptPayload } from "../utils/dataEncryption";
 
 const router = Router();
 
@@ -51,11 +52,20 @@ router.post("/register", async (req, res) => {
 
   const actor = auditActor(req, email);
 
+  const encryptedPayload = buildEncryptedPayload({
+    email,
+    name,
+    role,
+    password_hash: passwordHash,
+    created_by: actor,
+    updated_by: actor,
+  });
+
   const insert = await pool.query(
-    `INSERT INTO users (email, name, role, password_hash, created_by, created_on, updated_by, updated_on)
-     VALUES ($1, $2, $3, $4, $5, NOW(), $5, NOW())
+    `INSERT INTO users (email, name, role, password_hash, created_by, created_on, updated_by, updated_on, encrypted_payload)
+     VALUES ($1, $2, $3, $4, $5, NOW(), $5, NOW(), $6)
      RETURNING id::text, email, name, role, ${AUDIT_SELECT_SQL}`,
-    [email, name, role, passwordHash, actor]
+    [email, name, role, passwordHash, actor, encryptedPayload]
   );
 
   const user = insert.rows[0];
@@ -72,13 +82,26 @@ router.post("/login", async (req, res) => {
   const { email, password } = parsed.data;
 
   const result = await pool.query(
-    `SELECT id::text, email, name, role, password_hash, ${AUDIT_SELECT_SQL}
+    `SELECT id::text, email, name, role, password_hash, encrypted_payload, ${AUDIT_SELECT_SQL}
      FROM users
      WHERE email = $1`,
     [email]
   );
 
-  const user = result.rows[0];
+  let user = result.rows[0];
+  if (user?.encrypted_payload) {
+    try {
+      const decrypted = maybeDecryptPayload(user.encrypted_payload) as any;
+      if (decrypted && typeof decrypted === "object") {
+        user = {
+          ...user,
+          ...decrypted,
+        };
+      }
+    } catch (err) {
+      console.warn("Failed to decrypt user payload:", err);
+    }
+  }
   if (!user) return res.status(401).json({ detail: "Invalid email or password" });
 
   const ok = await verifyPassword(password, user.password_hash);

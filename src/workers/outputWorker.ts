@@ -277,6 +277,7 @@
 import { pool } from "../db";
 import { v4 as uuidv4 } from "uuid";
 import { newprocessOutputAgent, processOutputAgent } from "./printWorker";
+import { buildEncryptedPayload } from "../utils/dataEncryption";
 
 const OUTPUT_FORMAT_MAP: Record<string, string[]> = {
   html: ["HTML"],
@@ -372,17 +373,31 @@ export async function processOutputDetermination(eventId: string): Promise<void>
     for (const format of formats) {
       const outputId = uuidv4();
 
+      const encryptedOutputPayload = buildEncryptedPayload({
+        output_id: outputId,
+        event_id: eventId,
+        form_id: form,
+        printer: "PDF-EXPORT",
+        format,
+        status: "Pending",
+        retries: 0,
+        created_by: "system",
+        updated_by: "system",
+        document_json: JSON.stringify(docData),
+      });
+
       await pool.query(
         `INSERT INTO outputs
-        (output_id, event_id, form_id, printer, format, status, retries, created_by, created_on, updated_by, updated_on, document_json)
-       VALUES ($1, $2, $3, $4, $5, 'Pending', 0, 'system', NOW(), 'system', NOW(), $6)`,
+        (output_id, event_id, form_id, printer, format, status, retries, created_by, created_on, updated_by, updated_on, document_json, encrypted_payload)
+       VALUES ($1, $2, $3, $4, $5, 'Pending', 0, 'system', NOW(), 'system', NOW(), $6, $7)`,
         [
           outputId,
           eventId,
           form,
-          "PDF-EXPORT", // Default printer, can be overridden by label_config
+          "PDF-EXPORT",
           format,
-          JSON.stringify(docData), // ✅ Pass actual data to outputs
+          JSON.stringify(docData),
+          encryptedOutputPayload,
         ]
       );
 
@@ -710,17 +725,31 @@ export async function newprocessOutputDetermination(eventId: string, simulate: b
 
       const outputId = uuidv4();
 
+      const encryptedOutputPayload = buildEncryptedPayload({
+        output_id: outputId,
+        event_id: eventId,
+        form_id: label.label_id,
+        printer: label.printer ?? "PDF-EXPORT",
+        format: outputMode,
+        status: "Pending",
+        retries: 0,
+        created_by: "system",
+        updated_by: "system",
+        document_json: JSON.stringify(payloadData),
+      });
+
       await pool.query(
         `INSERT INTO outputs
-         (output_id, event_id, form_id, printer, format, status, retries, created_by, created_on, updated_by, updated_on, document_json)
-         VALUES ($1, $2, $3, $4, $5, 'Pending', 0, 'system', NOW(), 'system', NOW(), $6)`,
+         (output_id, event_id, form_id, printer, format, status, retries, created_by, created_on, updated_by, updated_on, document_json, encrypted_payload)
+         VALUES ($1, $2, $3, $4, $5, 'Pending', 0, 'system', NOW(), 'system', NOW(), $6, $7)`,
         [
           outputId,
           eventId,
           label.label_id,
           label.printer ?? "PDF-EXPORT",
-          outputMode,          // format column mirrors output_mode directly
+          outputMode,
           JSON.stringify(payloadData),
+          encryptedOutputPayload,
         ],
       );
 

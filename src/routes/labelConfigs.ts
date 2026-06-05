@@ -4,6 +4,7 @@ import { pool } from "../db";
 // import { requireUser, requireConfigurator, AuthedRequest } from "../middleware/auth";
 import { requireConfigurator, AuthedRequest } from "../middleware/auth";
 import { auditActor, AUDIT_SELECT_SQL } from "../utils/audit";
+import { buildEncryptedPayload, maybeDecryptPayload } from "../utils/dataEncryption";
 
 const router = Router();
 
@@ -149,6 +150,7 @@ router.get("/", async (req, res) => {
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
+      encrypted_payload,
       ${AUDIT_SELECT_SQL}
     FROM label_configs
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
@@ -157,7 +159,41 @@ router.get("/", async (req, res) => {
   `;
 
   const result = await pool.query(sql, values);
-  return res.json(result.rows);
+  const formatted = result.rows.map((r) => {
+    let decryptedPayload: any = null;
+    if (r.encrypted_payload) {
+      try {
+        decryptedPayload = maybeDecryptPayload(r.encrypted_payload) as any;
+      } catch (err) {
+        console.warn("Failed to decrypt label config payload:", err);
+      }
+    }
+
+    return {
+      config_id: r.config_id,
+      label_name: decryptedPayload?.label_name ?? r.label_name,
+      label_id: decryptedPayload?.label_id ?? r.label_id,
+      customer: decryptedPayload?.customer ?? r.customer,
+      plant: decryptedPayload?.plant ?? r.plant,
+      company_code: decryptedPayload?.company_code ?? r.company_code,
+      sales_organization: decryptedPayload?.sales_organization ?? r.sales_organization,
+      warehouse: decryptedPayload?.warehouse ?? r.warehouse,
+      shipping_point: decryptedPayload?.shipping_point ?? r.shipping_point,
+      process_type: decryptedPayload?.process_type ?? r.process_type,
+      number_of_labels: decryptedPayload?.number_of_labels ?? r.number_of_labels,
+      priority: decryptedPayload?.priority ?? r.priority,
+      active: decryptedPayload?.active ?? r.active,
+      valid_from: decryptedPayload?.valid_from ?? r.valid_from,
+      valid_to: decryptedPayload?.valid_to ?? r.valid_to,
+      printer: decryptedPayload?.printer ?? r.printer,
+      created_by: r.created_by,
+      created_on: r.created_on,
+      updated_by: r.updated_by,
+      updated_on: r.updated_on,
+    };
+  });
+
+  return res.json(formatted);
 });
 
 /**
@@ -180,6 +216,26 @@ router.post("/", async (req: AuthedRequest, res) => {
     return res.status(e.statusCode || 400).json({ detail: e.message || "Invalid reference" });
   }
 
+  const encryptedPayload = buildEncryptedPayload({
+    label_name: body.label_name,
+    label_id: body.label_id,
+    customer: body.customer ?? null,
+    plant: body.plant ?? null,
+    company_code: body.company_code ?? null,
+    sales_organization: body.sales_organization ?? null,
+    warehouse: body.warehouse ?? null,
+    shipping_point: body.shipping_point ?? null,
+    process_type: body.process_type ?? null,
+    number_of_labels: body.number_of_labels,
+    priority: body.priority,
+    active: body.active,
+    valid_from: body.valid_from ?? null,
+    valid_to: body.valid_to ?? null,
+    printer: body.printer ?? null,
+    created_by: nowUser,
+    updated_by: nowUser,
+  });
+
   const insertSql = `
     INSERT INTO label_configs (
       label_name, label_id,
@@ -187,7 +243,7 @@ router.post("/", async (req: AuthedRequest, res) => {
       number_of_labels, priority, active,
       valid_from, valid_to,
       printer,
-      created_by, created_on, updated_by, updated_on
+      created_by, created_on, updated_by, updated_on, encrypted_payload
     )
     VALUES (
       $1,$2,
@@ -195,7 +251,7 @@ router.post("/", async (req: AuthedRequest, res) => {
       $10,$11,$12,
       $13::date,$14::date,
       $15,
-      $16, NOW(), $17, NOW()
+      $16, NOW(), $17, NOW(), $18
     )
     RETURNING
       config_id::text,
@@ -235,6 +291,7 @@ router.post("/", async (req: AuthedRequest, res) => {
     body.printer ?? null,
     nowUser,
     nowUser,
+    encryptedPayload,
   ];
 
   const result = await pool.query(insertSql, values);
@@ -266,6 +323,7 @@ router.get("/:config_id", async (req, res) => {
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
+      encrypted_payload,
       ${AUDIT_SELECT_SQL}
     FROM label_configs
     WHERE config_id = $1::uuid
@@ -273,7 +331,38 @@ router.get("/:config_id", async (req, res) => {
   `;
   const result = await pool.query(sql, [config_id]);
   if (!result.rows[0]) return res.status(404).json({ detail: "Configuration not found" });
-  return res.json(result.rows[0]);
+
+  let decryptedPayload: any = null;
+  if (result.rows[0].encrypted_payload) {
+    try {
+      decryptedPayload = maybeDecryptPayload(result.rows[0].encrypted_payload) as any;
+    } catch (err) {
+      console.warn("Failed to decrypt label config payload:", err);
+    }
+  }
+
+  return res.json({
+    config_id: result.rows[0].config_id,
+    label_name: decryptedPayload?.label_name ?? result.rows[0].label_name,
+    label_id: decryptedPayload?.label_id ?? result.rows[0].label_id,
+    customer: decryptedPayload?.customer ?? result.rows[0].customer,
+    plant: decryptedPayload?.plant ?? result.rows[0].plant,
+    company_code: decryptedPayload?.company_code ?? result.rows[0].company_code,
+    sales_organization: decryptedPayload?.sales_organization ?? result.rows[0].sales_organization,
+    warehouse: decryptedPayload?.warehouse ?? result.rows[0].warehouse,
+    shipping_point: decryptedPayload?.shipping_point ?? result.rows[0].shipping_point,
+    process_type: decryptedPayload?.process_type ?? result.rows[0].process_type,
+    number_of_labels: decryptedPayload?.number_of_labels ?? result.rows[0].number_of_labels,
+    priority: decryptedPayload?.priority ?? result.rows[0].priority,
+    active: decryptedPayload?.active ?? result.rows[0].active,
+    valid_from: decryptedPayload?.valid_from ?? result.rows[0].valid_from,
+    valid_to: decryptedPayload?.valid_to ?? result.rows[0].valid_to,
+    printer: decryptedPayload?.printer ?? result.rows[0].printer,
+    created_by: result.rows[0].created_by,
+    created_on: result.rows[0].created_on,
+    updated_by: result.rows[0].updated_by,
+    updated_on: result.rows[0].updated_on,
+  });
 });
 
 /**
@@ -296,6 +385,68 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
   } catch (e: any) {
     return res.status(e.statusCode || 400).json({ detail: e.message || "Invalid reference" });
   }
+
+  const existingResult = await pool.query(
+    `SELECT
+      label_name,
+      label_id,
+      customer,
+      plant,
+      company_code,
+      sales_organization,
+      warehouse,
+      shipping_point,
+      process_type,
+      number_of_labels,
+      priority,
+      active,
+      to_char(valid_from, 'YYYY-MM-DD') as valid_from,
+      to_char(valid_to, 'YYYY-MM-DD') as valid_to,
+      printer,
+      encrypted_payload
+     FROM label_configs
+     WHERE config_id = $1::uuid
+     LIMIT 1`,
+    [config_id]
+  );
+
+  if (!existingResult.rows[0]) {
+    return res.status(404).json({ detail: "Configuration not found" });
+  }
+
+  let existingData: any = {
+    ...existingResult.rows[0],
+  };
+  if (existingData.encrypted_payload) {
+    try {
+      existingData = {
+        ...existingData,
+        ...(maybeDecryptPayload(existingData.encrypted_payload) as any),
+      };
+    } catch (err) {
+      console.warn("Failed to decrypt existing label config payload:", err);
+    }
+  }
+
+  const updatedPayload = buildEncryptedPayload({
+    label_name: body.label_name ?? existingData.label_name,
+    label_id: body.label_id ?? existingData.label_id,
+    customer: body.customer !== undefined ? body.customer : existingData.customer,
+    plant: body.plant !== undefined ? body.plant : existingData.plant,
+    company_code: body.company_code !== undefined ? body.company_code : existingData.company_code,
+    sales_organization: body.sales_organization !== undefined ? body.sales_organization : existingData.sales_organization,
+    warehouse: body.warehouse !== undefined ? body.warehouse : existingData.warehouse,
+    shipping_point: body.shipping_point !== undefined ? body.shipping_point : existingData.shipping_point,
+    process_type: body.process_type !== undefined ? body.process_type : existingData.process_type,
+    number_of_labels: body.number_of_labels ?? existingData.number_of_labels,
+    priority: body.priority ?? existingData.priority,
+    active: body.active ?? existingData.active,
+    valid_from: body.valid_from ?? existingData.valid_from,
+    valid_to: body.valid_to ?? existingData.valid_to,
+    printer: body.printer ?? existingData.printer,
+    created_by: existingData.created_by ?? nowUser,
+    updated_by: nowUser,
+  });
 
   // Build dynamic update query similar to Mongo $set
   const setParts: string[] = [];
@@ -325,6 +476,8 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
   setField("valid_to", body.valid_to ?? null, "date");
   setField("printer", body.printer ?? null);
 
+  setParts.push(`encrypted_payload = $${i++}`);
+  values.push(updatedPayload);
   setParts.push(`updated_by = $${i++}`);
   values.push(nowUser);
   setParts.push(`updated_on = NOW()`);

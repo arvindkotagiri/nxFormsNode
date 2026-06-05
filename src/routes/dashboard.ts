@@ -55,21 +55,30 @@ router.get("/", async (_req, res) => {
       { label: "Avg Processing Time", value: avgProcessingTime, icon: "Timer", trend: "", up: false, isString: true },
     ];
 
-    // Outputs by Context
+    // Outputs by Context (case-insensitive merge; prefer catalog display name)
     const outputsByContextRes = await pool.query(`
-  SELECT e.context,
-         COUNT(*) FILTER (WHERE o.status='Success') AS outputs,
-         COUNT(*) FILTER (WHERE o.status='Failed') AS errors
-  FROM outputs o
-  JOIN events e ON o.event_id = e.event_id
-  GROUP BY e.context
-  ORDER BY outputs DESC
-`);
+      SELECT
+        LOWER(TRIM(COALESCE(e.context, 'unknown'))) AS ctx_key,
+        COALESCE(
+          MAX(c.name),
+          INITCAP(REPLACE(REPLACE(TRIM(MAX(e.context)), '_', ' '), '-', ' '))
+        ) AS name,
+        COUNT(*) FILTER (WHERE o.status = 'Success') AS outputs,
+        COUNT(*) FILTER (WHERE o.status = 'Failed') AS errors
+      FROM outputs o
+      JOIN events e ON o.event_id = e.event_id
+      LEFT JOIN contexts c ON (
+        LOWER(TRIM(c.name)) = LOWER(TRIM(e.context))
+        OR LOWER(TRIM(CAST(c.id AS TEXT))) = LOWER(TRIM(e.context))
+      )
+      GROUP BY LOWER(TRIM(COALESCE(e.context, 'unknown')))
+      ORDER BY outputs DESC
+    `);
     const outputsByContext = outputsByContextRes.rows.map((r: any) => ({
-  name: r.context,
-  outputs: Number(r.outputs),
-  errors: Number(r.errors),
-}));
+      name: r.name,
+      outputs: Number(r.outputs),
+      errors: Number(r.errors),
+    }));
 
     // Status Distribution
     const statusDist = [

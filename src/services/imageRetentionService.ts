@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { pool } from "../db";
+import { buildEncryptedPayload, maybeDecryptPayload } from "../utils/dataEncryption";
 
 export type ImageMetadataResponse = {
   imageName: string;
@@ -62,6 +63,17 @@ export async function saveImageMetadataToDb(args: {
 }): Promise<ImageMasterRow> {
   const { file, meta, createdBy = null, updatedBy = null } = args;
 
+  const encryptedPayload = buildEncryptedPayload({
+    name: meta.imageName,
+    size: meta.size,
+    resolution: meta.resolution,
+    color: meta.color,
+    mime_type: file.mimetype,
+    image_data: file.buffer,
+    created_by: createdBy,
+    updated_by: updatedBy,
+  });
+
   const result = await pool.query(
     `
     INSERT INTO image_master (
@@ -74,9 +86,10 @@ export async function saveImageMetadataToDb(args: {
       created_by,
       updated_by,
       created_on,
-      updated_on
+      updated_on,
+      encrypted_payload
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), $9)
     RETURNING
       id::text,
       name,
@@ -98,6 +111,7 @@ export async function saveImageMetadataToDb(args: {
       file.buffer,
       createdBy,
       updatedBy,
+      encryptedPayload,
     ]
   );
 
@@ -114,6 +128,7 @@ export async function getAllImagesFromDb(): Promise<ImageMasterRow[]> {
       resolution,
       color,
       mime_type,
+      encrypted_payload,
       created_by,
       updated_by,
       created_on::text,
@@ -123,7 +138,40 @@ export async function getAllImagesFromDb(): Promise<ImageMasterRow[]> {
     `
   );
 
-  return result.rows as ImageMasterRow[];
+  return result.rows.map((r) => {
+    if (r.encrypted_payload) {
+      try {
+        const decrypted = maybeDecryptPayload(r.encrypted_payload) as any;
+        return {
+          id: r.id,
+          name: decrypted?.name ?? r.name,
+          size: decrypted?.size ?? r.size,
+          resolution: decrypted?.resolution ?? r.resolution,
+          color: decrypted?.color ?? r.color,
+          mime_type: decrypted?.mime_type ?? r.mime_type,
+          created_by: r.created_by,
+          updated_by: r.updated_by,
+          created_on: r.created_on,
+          updated_on: r.updated_on,
+        };
+      } catch (err) {
+        console.warn("Failed to decrypt image metadata:", err);
+      }
+    }
+
+    return {
+      id: r.id,
+      name: r.name,
+      size: r.size,
+      resolution: r.resolution,
+      color: r.color,
+      mime_type: r.mime_type,
+      created_by: r.created_by,
+      updated_by: r.updated_by,
+      created_on: r.created_on,
+      updated_on: r.updated_on,
+    };
+  }) as ImageMasterRow[];
 }
 
 export async function getImageBlobById(
@@ -131,7 +179,7 @@ export async function getImageBlobById(
 ): Promise<{ mimeType: string; imageData: Buffer } | null> {
   const result = await pool.query(
     `
-    SELECT mime_type, image_data
+    SELECT mime_type, image_data, encrypted_payload
     FROM image_master
     WHERE id = $1
     `,
@@ -140,9 +188,24 @@ export async function getImageBlobById(
 
   if (!result.rows[0]) return null;
 
+  let mimeType = result.rows[0].mime_type ?? "image/png";
+  let imageData = result.rows[0].image_data;
+
+  if (result.rows[0].encrypted_payload) {
+    try {
+      const decrypted = maybeDecryptPayload(result.rows[0].encrypted_payload) as any;
+      if (decrypted) {
+        mimeType = decrypted.mime_type ?? mimeType;
+        imageData = decrypted.image_data ?? imageData;
+      }
+    } catch (err) {
+      console.warn("Failed to decrypt image blob payload:", err);
+    }
+  }
+
   return {
-    mimeType: result.rows[0].mime_type ?? "image/png",
-    imageData: result.rows[0].image_data,
+    mimeType,
+    imageData,
   };
 }
 

@@ -60,10 +60,24 @@ app.get("/", (_req, res) => {
 
 const port = Number(process.env.PORT || 4000);
 
+import https from 'https';
+import fs from 'fs';
+
 ensureAuditColumns().catch((err) => {
   console.error("[db] Failed to ensure audit columns:", err);
 });
 
-app.listen(port, () => {
-  console.log(`API running on http://localhost:${port}`);
-});
+// If SSL cert + key are provided via environment, start HTTPS on 443.
+if (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
+  const options = {
+    key: fs.readFileSync(process.env.SSL_KEY_PATH),
+    cert: fs.readFileSync(process.env.SSL_CERT_PATH),
+  };
+  https.createServer(options, app).listen(443, () => {
+    console.log('API running on https://localhost:443');
+  });
+} else {
+  app.listen(port, () => {
+    console.log(`API running on http://localhost:${port}`);
+  });
+}
