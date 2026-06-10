@@ -3,6 +3,9 @@ import express from 'express';
 import { pool } from '../db';
 import axios from 'axios';
 import dotenv from 'dotenv';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -72,6 +75,16 @@ export async function initSettingsDb() {
         END $$;
       `);
     }
+
+    // 3. Create custom_fonts
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS custom_fonts (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        filename TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
     console.log("[INIT] System settings and label tables verified/created successfully.");
   } catch (err) {
@@ -200,6 +213,79 @@ router.post('/model-configs', async (req, res) => {
     }
     res.json({ status: "success" });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Configure multer storage for custom fonts
+const fontStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = 'static/fonts';
+    if (!fs.existsSync(dir)){
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'font-' + uniqueSuffix + ext);
+  }
+});
+const uploadFont = multer({ storage: fontStorage });
+
+// Upload Font API Route
+router.post('/api/upload-font', uploadFont.single('fontFile'), async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !req.file) {
+      return res.status(400).json({ error: "Missing font name or file" });
+    }
+    const filename = req.file.filename;
+
+    await pool.query(
+      "INSERT INTO custom_fonts (name, filename) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET filename = EXCLUDED.filename",
+      [name, filename]
+    );
+
+    res.status(201).json({ status: "success", message: "Font uploaded successfully", name, filename });
+  } catch (err) {
+    console.error("Font upload error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get Fonts API Route
+router.get('/api/fonts', async (req, res) => {
+  try {
+    const result = await pool.query("SELECT id, name, filename FROM custom_fonts ORDER BY name ASC");
+    res.status(200).json(result.rows);
+  } catch (err) {
+    console.error("Error fetching fonts:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete Font API Route
+router.delete('/api/fonts/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const fontRes = await pool.query("SELECT filename FROM custom_fonts WHERE id = $1", [id]);
+    if (fontRes.rows.length === 0) {
+      return res.status(404).json({ error: "Font not found" });
+    }
+    const filename = fontRes.rows[0].filename;
+
+    await pool.query("DELETE FROM custom_fonts WHERE id = $1", [id]);
+
+    const filePath = path.join('static/fonts', filename);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+
+    res.status(200).json({ status: "success", message: "Font deleted successfully" });
+  } catch (err) {
+    console.error("Font deletion error:", err);
     res.status(500).json({ error: err.message });
   }
 });
