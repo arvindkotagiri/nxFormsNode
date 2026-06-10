@@ -13,7 +13,19 @@ import dashboardRoutes from "./routes/dashboard";
 import contextsRoutes from "./routes/contexts";
 import simulationRoutes from "./routes/simulation";
 import imageRetentionRoutes from "./routes/imageRetention";
+import settingsRoutes, { initSettingsDb } from "./legacyRoutes/settingsRoutes";
+import dbRoutes from "./legacyRoutes/dbRoutes";
+import labelRoutes from "./legacyRoutes/labelRoutes";
+import analyzeRoutes from "./legacyRoutes/analyze";
+import generateZplRoutes from "./legacyRoutes/generateZpl";
+import generateXdpRoutes from "./legacyRoutes/generateXdp";
+import replicateInvoiceRoutes from "./legacyRoutes/replicateInvoice";
+import apiMasterRoutes from "./legacyRoutes/apiMasterRoutes";
+import printerRoutes from "./legacyRoutes/printerRoutes";
+import legacyImageRetentionRoutes, { initImageDb } from "./legacyRoutes/imageRetentionRoutes";
 import { ensureAuditColumns } from "./db/ensureAuditColumns";
+import https from 'https';
+import fs from 'fs';
 
 
 dotenv.config();
@@ -30,7 +42,7 @@ app.use(
 );
 app.options(/.*/, cors());
 
-
+app.use(express.static('static'));
 app.use(express.json());
 app.use("/auth", authRoutes);
 app.use("/reference", referenceRoutes);
@@ -43,6 +55,16 @@ app.use("/dashboard", dashboardRoutes);
 app.use("/contexts", contextsRoutes);
 app.use("/simulation", simulationRoutes);
 app.use("/image-retention", imageRetentionRoutes);
+app.use("/", dbRoutes);
+app.use("/", labelRoutes);
+app.use("/", settingsRoutes);
+app.use("/", analyzeRoutes);
+app.use("/", generateZplRoutes);
+app.use("/", generateXdpRoutes);
+app.use("/", replicateInvoiceRoutes);
+app.use("/api", printerRoutes);
+app.use("/api", apiMasterRoutes);
+app.use("/api", legacyImageRetentionRoutes);
 
 // Health check (matches your FastAPI /health)
 app.get("/health", async (_req, res) => {
@@ -60,24 +82,29 @@ app.get("/", (_req, res) => {
 
 const port = Number(process.env.PORT || 4000);
 
-import https from 'https';
-import fs from 'fs';
+async function startServer() {
+  try {
+    await initSettingsDb();
+    await initImageDb();
+    await ensureAuditColumns();
 
-ensureAuditColumns().catch((err) => {
-  console.error("[db] Failed to ensure audit columns:", err);
-});
-
-// If SSL cert + key are provided via environment, start HTTPS on 443.
-if (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
-  const options = {
-    key: fs.readFileSync(process.env.SSL_KEY_PATH),
-    cert: fs.readFileSync(process.env.SSL_CERT_PATH),
-  };
-  https.createServer(options, app).listen(443, () => {
-    console.log('API running on https://localhost:443');
-  });
-} else {
-  app.listen(port, () => {
-    console.log(`API running on http://localhost:${port}`);
-  });
+    if (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
+      const options = {
+        key: fs.readFileSync(process.env.SSL_KEY_PATH),
+        cert: fs.readFileSync(process.env.SSL_CERT_PATH),
+      };
+      https.createServer(options, app).listen(443, () => {
+        console.log('API running on https://localhost:443');
+      });
+    } else {
+      app.listen(port, () => {
+        console.log(`API running on http://localhost:${port}`);
+      });
+    }
+  } catch (err) {
+    console.error("[CRITICAL ERROR] Failed to initialize backend:", err);
+    process.exit(1);
+  }
 }
+
+startServer();
