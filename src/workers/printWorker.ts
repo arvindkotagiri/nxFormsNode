@@ -186,6 +186,24 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function getKeyAliases(key: string): string[] {
+  const leaf = key.includes(".") ? key.substring(key.lastIndexOf(".") + 1) : key;
+  return leaf ? [leaf] : [];
+}
+
+function replacePlaceholderToken(raw: string, token: string, value: string): { rendered: string; replaced: boolean } {
+  const safeToken = escapeRegex(token);
+  const pattern = new RegExp(`\\{\\{\\s*${safeToken}\\s*\\}\\}|\\{\\s*${safeToken}\\s*\\}`, "gi");
+  let replaced = false;
+
+  const rendered = raw.replace(pattern, () => {
+    replaced = true;
+    return value;
+  });
+
+  return { rendered, replaced };
+}
+
 // Substitutes {Placeholder} and {{Placeholder}} patterns in a raw template
 // string using a pre-resolved values map.
 function substituteValues(
@@ -195,20 +213,15 @@ function substituteValues(
   let rendered = raw;
 
   for (const [placeholder, valueStr] of Object.entries(resolvedValues)) {
-    const safeKey = escapeRegex(placeholder.replace(/\s+/g, ""));
+    const token = placeholder.replace(/\s+/g, "");
+    const replacement = replacePlaceholderToken(rendered, token, valueStr);
+    rendered = replacement.rendered;
 
-    rendered = rendered.replace(
-      new RegExp(`\\{${safeKey}\\}`, "g"),
-      valueStr,
-    );
-    rendered = rendered.replace(
-      new RegExp(`{{${safeKey}}}`, "g"),
-      valueStr,
-    );
-
-    console.log(
-      `[API3]   Substituted {${placeholder}} / {{${placeholder}}} → "${valueStr}"`,
-    );
+    if (replacement.replaced) {
+      console.log(
+        `[API3]   Substituted {${placeholder}} / {{${placeholder}}} → "${valueStr}"`,
+      );
+    }
   }
 
   return rendered;
@@ -245,12 +258,15 @@ function renderZpl(
 
   for (const [key, value] of Object.entries(docData)) {
     const valueStr = String(value ?? "");
-    const safeKey = escapeRegex(key);
+    const aliases = getKeyAliases(key);
 
-    rendered = rendered.replace(new RegExp(`\\{${safeKey}\\}`, "g"), valueStr);
-    rendered = rendered.replace(new RegExp(`{{${safeKey}}}`, "g"), valueStr);
-
-    console.log(`[API3]   Direct substituted {${key}} → "${valueStr}"`);
+    for (const alias of aliases) {
+      const replacement = replacePlaceholderToken(rendered, alias, valueStr);
+      rendered = replacement.rendered;
+      if (replacement.replaced) {
+        console.log(`[API3]   Direct substituted {${alias}} (from ${key}) → "${valueStr}"`);
+      }
+    }
   }
 
   return rendered;
@@ -298,7 +314,10 @@ function renderHtml(
   const normalizedDoc: Record<string, any> = {};
 
   for (const [key, value] of Object.entries(docData)) {
-    normalizedDoc[normalizeKey(key)] = value;
+    const aliases = getKeyAliases(key);
+    for (const alias of aliases) {
+      normalizedDoc[normalizeKey(alias)] = value;
+    }
   }
 
   return raw.replace(/{{(.*?)}}/g, (_, placeholder) => {
@@ -338,12 +357,15 @@ function renderXdp(
 
   for (const [key, value] of Object.entries(docData)) {
     const valueStr = String(value ?? "");
-    const safeKey = escapeRegex(key);
+    const aliases = getKeyAliases(key);
 
-    rendered = rendered.replace(new RegExp(`\\{${safeKey}\\}`, "g"), valueStr);
-    rendered = rendered.replace(new RegExp(`{{${safeKey}}}`, "g"), valueStr);
-
-    console.log(`[API3]   Direct substituted {${key}} → "${valueStr}"`);
+    for (const alias of aliases) {
+      const replacement = replacePlaceholderToken(rendered, alias, valueStr);
+      rendered = replacement.rendered;
+      if (replacement.replaced) {
+        console.log(`[API3]   Direct substituted {${alias}} (from ${key}) → "${valueStr}"`);
+      }
+    }
   }
 
   return rendered;

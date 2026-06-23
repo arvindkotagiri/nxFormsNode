@@ -31,6 +31,7 @@ const labelConfigCreateSchema = z.object({
   valid_from: z.string().optional().nullable(), // ISO date string expected from frontend
   valid_to: z.string().optional().nullable(),
   printer: z.string().optional().nullable(),
+  output_conditions: z.record(z.string(), z.string()).optional().nullable(),
 });
 
 const labelConfigUpdateSchema = labelConfigCreateSchema.partial();
@@ -232,6 +233,7 @@ router.post("/", async (req: AuthedRequest, res) => {
     valid_from: body.valid_from ?? null,
     valid_to: body.valid_to ?? null,
     printer: body.printer ?? null,
+    output_conditions: body.output_conditions ?? {},
     created_by: nowUser,
     updated_by: nowUser,
   });
@@ -242,7 +244,7 @@ router.post("/", async (req: AuthedRequest, res) => {
       customer, plant, company_code, sales_organization, warehouse, shipping_point, process_type,
       number_of_labels, priority, active,
       valid_from, valid_to,
-      printer,
+      printer, output_conditions,
       created_by, created_on, updated_by, updated_on, encrypted_payload
     )
     VALUES (
@@ -250,8 +252,8 @@ router.post("/", async (req: AuthedRequest, res) => {
       $3,$4,$5,$6,$7,$8,$9,
       $10,$11,$12,
       $13::date,$14::date,
-      $15,
-      $16, NOW(), $17, NOW(), $18
+      $15, $16::jsonb,
+      $17, NOW(), $18, NOW(), $19
     )
     RETURNING
       config_id::text,
@@ -289,6 +291,7 @@ router.post("/", async (req: AuthedRequest, res) => {
     body.valid_from ?? null,
     body.valid_to ?? null,
     body.printer ?? null,
+    JSON.stringify(body.output_conditions ?? {}),
     nowUser,
     nowUser,
     encryptedPayload,
@@ -323,6 +326,7 @@ router.get("/:config_id", async (req, res) => {
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
+      output_conditions,
       encrypted_payload,
       ${AUDIT_SELECT_SQL}
     FROM label_configs
@@ -358,6 +362,7 @@ router.get("/:config_id", async (req, res) => {
     valid_from: decryptedPayload?.valid_from ?? result.rows[0].valid_from,
     valid_to: decryptedPayload?.valid_to ?? result.rows[0].valid_to,
     printer: decryptedPayload?.printer ?? result.rows[0].printer,
+    output_conditions: result.rows[0].output_conditions ?? decryptedPayload?.output_conditions ?? {},
     created_by: result.rows[0].created_by,
     created_on: result.rows[0].created_on,
     updated_by: result.rows[0].updated_by,
@@ -403,6 +408,7 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
+      output_conditions,
       encrypted_payload
      FROM label_configs
      WHERE config_id = $1::uuid
@@ -475,6 +481,10 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
   setField("valid_from", body.valid_from ?? null, "date");
   setField("valid_to", body.valid_to ?? null, "date");
   setField("printer", body.printer ?? null);
+  if (body.output_conditions !== undefined) {
+    setParts.push(`output_conditions = $${i++}::jsonb`);
+    values.push(JSON.stringify(body.output_conditions ?? {}));
+  }
 
   setParts.push(`encrypted_payload = $${i++}`);
   values.push(updatedPayload);

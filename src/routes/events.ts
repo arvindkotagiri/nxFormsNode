@@ -49,7 +49,7 @@ router.get("/", async (req, res) => {
         source: decryptedPayload?.source ?? r.source,
         context: decryptedPayload?.context ?? r.context,
         form: decryptedPayload?.form ?? r.form,
-        status: decryptedPayload?.status ?? r.status,
+        status: r.status ?? decryptedPayload?.status,
         ts: decryptedPayload?.event_timestamp ?? r.event_timestamp,
         duration: r.duration_ms ? `${r.duration_ms}ms` : "–",
         outputs: decryptedPayload?.outputs ?? r.outputs,
@@ -142,8 +142,19 @@ router.post("/trigger", async (req, res) => {
       `INSERT INTO events 
         (event_id, source, context, entity_key, event_type, triggered_by, print_to_file, status, event_timestamp, outputs,
          created_by, created_on, updated_by, updated_on, encrypted_payload) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', NOW(), 0, $6, NOW(), $6, NOW(), $8)`,
-      [eventId, source_system, context, entity_key, event_type, triggered_by, print_to_file, encryptedPayload]
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', NOW(), 0, $8, NOW(), $9, NOW(), $10)`,
+      [
+        eventId,
+        source_system,
+        context,
+        entity_key,
+        event_type,
+        triggered_by,
+        print_to_file,
+        triggered_by,
+        triggered_by,
+        encryptedPayload,
+      ]
     );
 
     // Trigger API 2 asynchronously 
@@ -201,8 +212,8 @@ router.get("/:eventId/output", requireUser, async (req, res) => {
     if (result.rows[0].event_encrypted_payload) {
       try {
         const decryptedEvent = maybeDecryptPayload(result.rows[0].event_encrypted_payload) as any;
-        eventStatus = decryptedEvent?.status ?? eventStatus;
-        eventError = decryptedEvent?.error_message ?? eventError;
+        eventStatus = eventStatus ?? decryptedEvent?.status;
+        eventError = eventError ?? decryptedEvent?.error_message;
       } catch (err) {
         console.warn(`Failed to decrypt event payload for ${eventId}:`, err);
       }

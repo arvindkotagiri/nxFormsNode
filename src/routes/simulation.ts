@@ -58,15 +58,15 @@ router.get("/", async (req, res) => {
 /**
  * POST /api/simulation
  * Inserts a new simulation record.
- * Body: { simulationName: string, context: string, form: string, inputValues: Record<string, string> }
+ * Body: { simulationName: string, context: string, inputValues: Record<string, string> }
  */
 router.post("/", async (req: AuthedRequest, res) => {
-  const { simulationName, context, form, inputValues } = req.body;
+  const { simulationName, context, form = "", inputValues } = req.body;
 
-  if (!simulationName || !context || !form) {
+  if (!simulationName || !context) {
     return res
       .status(400)
-      .json({ error: "simulationName, context and form are required" });
+      .json({ error: "simulationName and context are required" });
   }
 
   const actor = auditActor(req);

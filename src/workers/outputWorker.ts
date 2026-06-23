@@ -277,7 +277,7 @@
 import { pool } from "../db";
 import { v4 as uuidv4 } from "uuid";
 import { newprocessOutputAgent, processOutputAgent } from "./printWorker";
-import { buildEncryptedPayload } from "../utils/dataEncryption";
+import { buildEncryptedPayload, maybeDecryptPayload } from "../utils/dataEncryption";
 
 const OUTPUT_FORMAT_MAP: Record<string, string[]> = {
   html: ["HTML"],
@@ -815,11 +815,50 @@ async function newfinalizeEvent(
   outputsCount: number,
 ): Promise<void> {
   const durationMs = Date.now() - startTime;
+
+  const eventResult = await pool.query(
+    `SELECT encrypted_payload
+     FROM events
+     WHERE event_id = $1`,
+    [eventId],
+  );
+
+  let encryptedPayload: string | null = null;
+  const existingPayload = eventResult.rows[0]?.encrypted_payload;
+
+  if (existingPayload) {
+    try {
+      const decryptedPayload = maybeDecryptPayload(existingPayload) as Record<string, unknown> | null;
+      encryptedPayload = buildEncryptedPayload({
+        ...(decryptedPayload ?? {}),
+        status,
+        error_message: errorMessage,
+        duration_ms: durationMs,
+        outputs: outputsCount,
+        updated_by: "system",
+        updated_on: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn(`[API2] Failed to refresh encrypted payload for event ${eventId}:`, err);
+    }
+  }
+
+  if (encryptedPayload) {
     await pool.query(
       `UPDATE events
        SET status = $1, error_message = $2, duration_ms = $3, outputs = $4,
-           updated_by = 'system', updated_on = NOW()
+           updated_by = 'system', updated_on = NOW(), encrypted_payload = $6
        WHERE event_id = $5`,
-      [status, errorMessage, durationMs, outputsCount, eventId]
+      [status, errorMessage, durationMs, outputsCount, eventId, encryptedPayload],
     );
+    return;
+  }
+
+  await pool.query(
+    `UPDATE events
+     SET status = $1, error_message = $2, duration_ms = $3, outputs = $4,
+         updated_by = 'system', updated_on = NOW()
+     WHERE event_id = $5`,
+    [status, errorMessage, durationMs, outputsCount, eventId],
+  );
 }

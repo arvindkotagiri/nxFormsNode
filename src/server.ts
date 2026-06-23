@@ -24,13 +24,17 @@ import apiMasterRoutes from "./legacyRoutes/apiMasterRoutes";
 import printerRoutes from "./legacyRoutes/printerRoutes";
 import legacyImageRetentionRoutes, { initImageDb } from "./legacyRoutes/imageRetentionRoutes";
 import { ensureAuditColumns } from "./db/ensureAuditColumns";
+import { initApiCatalogDb } from "./db/initApiCatalogDb";
 import https from 'https';
 import fs from 'fs';
+import path from "path";
 
 
 dotenv.config();
 
 const app = express();
+const staticDir = path.resolve(process.cwd(), "static");
+const spaIndexPath = path.join(staticDir, "index.html");
 
 app.use(
   cors({
@@ -42,7 +46,7 @@ app.use(
 );
 app.options(/.*/, cors());
 
-app.use(express.static('static'));
+app.use(express.static(staticDir));
 app.use(express.json());
 app.use("/auth", authRoutes);
 app.use("/reference", referenceRoutes);
@@ -62,8 +66,8 @@ app.use("/", analyzeRoutes);
 app.use("/", generateZplRoutes);
 app.use("/", generateXdpRoutes);
 app.use("/", replicateInvoiceRoutes);
-app.use("/api", printerRoutes);
 app.use("/api", apiMasterRoutes);
+app.use("/api", printerRoutes);
 app.use("/api", legacyImageRetentionRoutes);
 
 // Health check (matches your FastAPI /health)
@@ -80,6 +84,33 @@ app.get("/", (_req, res) => {
   res.json({ message: "Label Configuration & Determination API", version: "1.0.0" });
 });
 
+const apiRoutePrefixes = [
+  "/api",
+  "/auth",
+  "/reference",
+  "/label-configs",
+  "/label-determination",
+  "/events",
+  "/outputs",
+  "/logs",
+  "/dashboard",
+  "/contexts",
+  "/simulation",
+  "/image-retention",
+  "/health",
+];
+
+// Serve SPA index on deep-link refreshes, while leaving API paths untouched.
+app.get(/.*/, (req, res, next) => {
+  if (!req.accepts("html")) return next();
+
+  const isApiPath = apiRoutePrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`));
+  if (isApiPath) return next();
+
+  if (!fs.existsSync(spaIndexPath)) return next();
+  return res.sendFile(spaIndexPath);
+});
+
 const port = Number(process.env.PORT || 4000);
 
 async function startServer() {
@@ -87,6 +118,7 @@ async function startServer() {
     await initSettingsDb();
     await initImageDb();
     await ensureAuditColumns();
+    await initApiCatalogDb();
 
     if (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
       const options = {

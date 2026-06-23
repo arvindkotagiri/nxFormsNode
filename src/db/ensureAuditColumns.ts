@@ -6,6 +6,7 @@ const AUDIT_TABLES = [
   "outputs",
   "simulation_master",
   "contexts",
+  "api_output_definitions",
   "users",
   "logs_audit",
   "ref_customers",
