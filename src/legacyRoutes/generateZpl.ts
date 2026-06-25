@@ -92,7 +92,7 @@ async function getZplGraphic(imageBuffer) {
 }
 
 async function cropParts(pageImageBuffer, widthIn, dpi, htmlDesign) {
-  const promptFind = "Return JSON list of objects: {'field_name': 'logo'|'signature', 'box_2d': [ymin, xmin, ymax, xmax]}";
+  const promptFind = "Return JSON list of objects: {'field_name': 'logo'|'signature', 'box_2d': [ymin, xmin, ymax, xmax]}. For logos and signatures, ensure the box_2d coordinates encompass the ENTIRE graphic without any edge truncation.";
   try {
     const res = await callLLM('zpl', promptFind, null, pageImageBuffer, "application/json");
     let items = JSON.parse(res);
@@ -121,10 +121,15 @@ async function cropParts(pageImageBuffer, widthIn, dpi, htmlDesign) {
         const right = (xmax * w) / 1000;
         const bottom = (ymax * h) / 1000;
 
-        let extractLeft = Math.round(left);
-        let extractTop = Math.round(top);
-        let extractWidth = Math.min(w - extractLeft, Math.round(right - left));
-        let extractHeight = Math.min(h - extractTop, Math.round(bottom - top));
+        let padding = 5;
+        if (fieldName.toLowerCase().includes("logo") || fieldName.toLowerCase().includes("signature")) {
+          padding = 20;
+        }
+
+        let extractLeft = Math.max(0, Math.round(left) - padding);
+        let extractTop = Math.max(0, Math.round(top) - padding);
+        let extractWidth = Math.min(w - extractLeft, Math.round(right - left) + 2 * padding);
+        let extractHeight = Math.min(h - extractTop, Math.round(bottom - top) + 2 * padding);
 
         if (extractWidth <= 0) extractWidth = 1;
         if (extractHeight <= 0) extractHeight = 1;
@@ -227,7 +232,10 @@ router.post('/generate-zpl', upload.single('image'), async (req, res) => {
     RULES:
     1. Use ^FB for multi-line text blocks.
     2. Use ^GB for boxes and separators.
-    3. For Barcodes: Use ^BC (Code 128) or ^BX (Data Matrix) as seen in image.
+    3. For Barcodes and QR Codes:
+        - Inspect elements in the HTML_DESIGN for \`data-chunk-type="barcode"\` and \`data-barcode-type\`.
+        - For QR Codes (\`data-barcode-type="qr"\`): Use the \`^BQ\` command (e.g. \`^BQN,2,x\` where x is the scale factor). The ZPL syntax for QR code requires the \`^FD\` string to start with the data switch characters \`QA,\` (e.g., \`^FDQA,{{Placeholder}}^FS\` or \`^FDQA,StaticData^FS\`). Do NOT omit the \`QA,\` prefix, otherwise the QR code will not encode the data properly.
+        - For 1D Barcodes (e.g., \`data-barcode-type="code128"\`, \`data-barcode-type="code39"\`, \`data-barcode-type="itf14"\`): Use the appropriate command like \`^BC\` (Code 128), \`^B3\` (Code 39), or \`^B2\` (Interleaved 2 of 5 / ITF-14) with dynamic placeholders or static data values.
     4. Return ONLY the code starting with ^XA and ending with ^XZ.
     5. DO NOT include markdown or explanations.
     6. If there is a LOGO, use the placeholder ^GF_LOGO_PLACEHOLDER.
@@ -235,13 +243,13 @@ router.post('/generate-zpl', upload.single('image'), async (req, res) => {
     8. If there is a LOGO, use the placeholder ^GF_LOGO_PLACEHOLDER.
     9. If there is a SIGNATURE, use the placeholder ^GF_SIGNATURE_PLACEHOLDER.
     10. TEMPLATING (STRICT RULE - DO NOT IGNORE):
-        - ANY text that looks like variable data MUST be replaced with placeholders.
+        - ANY text or barcode value that looks like variable data MUST be replaced with placeholders (e.g. \`{{CheckDate}}\` or \`{{PO_NUMBER}}\`).
         - DO NOT include actual values.
-        - Use ONLY placeholders like:
-        {{CheckDate}}, {{VendorName}}, {{Amount}}, {{CheckNumber}}, {{AmountInWords}}, {{VendorAddress1}}
         - Example:
         WRONG: ^FDSep/25/2023^FS
         CORRECT: ^FD{{CheckDate}}^FS
+        WRONG (for QR): ^FDQA,12345^FS
+        CORRECT (for QR): ^FDQA,{{PO_NUMBER}}^FS
     `;
 
     const zplBlocks = [];

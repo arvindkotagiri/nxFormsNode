@@ -32,6 +32,7 @@ const labelConfigCreateSchema = z.object({
   valid_to: z.string().optional().nullable(),
   printer: z.string().optional().nullable(),
   output_conditions: z.record(z.string(), z.string()).optional().nullable(),
+  custom_fields: z.record(z.string(), z.string()).optional().nullable(),
 });
 
 const labelConfigUpdateSchema = labelConfigCreateSchema.partial();
@@ -151,6 +152,8 @@ router.get("/", async (req, res) => {
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
+      output_conditions,
+      custom_fields,
       encrypted_payload,
       ${AUDIT_SELECT_SQL}
     FROM label_configs
@@ -170,6 +173,8 @@ router.get("/", async (req, res) => {
       }
     }
 
+    const conditions = r.custom_fields ?? r.output_conditions ?? decryptedPayload?.custom_fields ?? decryptedPayload?.output_conditions ?? {};
+
     return {
       config_id: r.config_id,
       label_name: decryptedPayload?.label_name ?? r.label_name,
@@ -187,6 +192,8 @@ router.get("/", async (req, res) => {
       valid_from: decryptedPayload?.valid_from ?? r.valid_from,
       valid_to: decryptedPayload?.valid_to ?? r.valid_to,
       printer: decryptedPayload?.printer ?? r.printer,
+      custom_fields: conditions,
+      output_conditions: conditions,
       created_by: r.created_by,
       created_on: r.created_on,
       updated_by: r.updated_by,
@@ -217,6 +224,8 @@ router.post("/", async (req: AuthedRequest, res) => {
     return res.status(e.statusCode || 400).json({ detail: e.message || "Invalid reference" });
   }
 
+  const conditions = body.custom_fields ?? body.output_conditions ?? {};
+
   const encryptedPayload = buildEncryptedPayload({
     label_name: body.label_name,
     label_id: body.label_id,
@@ -233,7 +242,8 @@ router.post("/", async (req: AuthedRequest, res) => {
     valid_from: body.valid_from ?? null,
     valid_to: body.valid_to ?? null,
     printer: body.printer ?? null,
-    output_conditions: body.output_conditions ?? {},
+    output_conditions: conditions,
+    custom_fields: conditions,
     created_by: nowUser,
     updated_by: nowUser,
   });
@@ -244,7 +254,7 @@ router.post("/", async (req: AuthedRequest, res) => {
       customer, plant, company_code, sales_organization, warehouse, shipping_point, process_type,
       number_of_labels, priority, active,
       valid_from, valid_to,
-      printer, output_conditions,
+      printer, output_conditions, custom_fields,
       created_by, created_on, updated_by, updated_on, encrypted_payload
     )
     VALUES (
@@ -252,8 +262,8 @@ router.post("/", async (req: AuthedRequest, res) => {
       $3,$4,$5,$6,$7,$8,$9,
       $10,$11,$12,
       $13::date,$14::date,
-      $15, $16::jsonb,
-      $17, NOW(), $18, NOW(), $19
+      $15, $16::jsonb, $17::jsonb,
+      $18, NOW(), $19, NOW(), $20
     )
     RETURNING
       config_id::text,
@@ -272,6 +282,8 @@ router.post("/", async (req: AuthedRequest, res) => {
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
+      output_conditions,
+      custom_fields,
       ${AUDIT_SELECT_SQL};
   `;
 
@@ -291,7 +303,8 @@ router.post("/", async (req: AuthedRequest, res) => {
     body.valid_from ?? null,
     body.valid_to ?? null,
     body.printer ?? null,
-    JSON.stringify(body.output_conditions ?? {}),
+    JSON.stringify(conditions),
+    JSON.stringify(conditions),
     nowUser,
     nowUser,
     encryptedPayload,
@@ -327,13 +340,14 @@ router.get("/:config_id", async (req, res) => {
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
       output_conditions,
+      custom_fields,
       encrypted_payload,
       ${AUDIT_SELECT_SQL}
     FROM label_configs
-    WHERE config_id = $1::uuid
+    WHERE config_id = $1::integer
     LIMIT 1;
   `;
-  const result = await pool.query(sql, [config_id]);
+  const result = await pool.query(sql, [parseInt(config_id, 10)]);
   if (!result.rows[0]) return res.status(404).json({ detail: "Configuration not found" });
 
   let decryptedPayload: any = null;
@@ -344,6 +358,8 @@ router.get("/:config_id", async (req, res) => {
       console.warn("Failed to decrypt label config payload:", err);
     }
   }
+
+  const conditions = result.rows[0].custom_fields ?? result.rows[0].output_conditions ?? decryptedPayload?.custom_fields ?? decryptedPayload?.output_conditions ?? {};
 
   return res.json({
     config_id: result.rows[0].config_id,
@@ -362,7 +378,8 @@ router.get("/:config_id", async (req, res) => {
     valid_from: decryptedPayload?.valid_from ?? result.rows[0].valid_from,
     valid_to: decryptedPayload?.valid_to ?? result.rows[0].valid_to,
     printer: decryptedPayload?.printer ?? result.rows[0].printer,
-    output_conditions: result.rows[0].output_conditions ?? decryptedPayload?.output_conditions ?? {},
+    output_conditions: conditions,
+    custom_fields: conditions,
     created_by: result.rows[0].created_by,
     created_on: result.rows[0].created_on,
     updated_by: result.rows[0].updated_by,
@@ -409,11 +426,12 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
       output_conditions,
+      custom_fields,
       encrypted_payload
      FROM label_configs
-     WHERE config_id = $1::uuid
+     WHERE config_id = $1::integer
      LIMIT 1`,
-    [config_id]
+    [parseInt(config_id as string, 10)]
   );
 
   if (!existingResult.rows[0]) {
@@ -434,6 +452,8 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
     }
   }
 
+  const conditions = body.custom_fields !== undefined ? body.custom_fields : (body.output_conditions !== undefined ? body.output_conditions : undefined);
+
   const updatedPayload = buildEncryptedPayload({
     label_name: body.label_name ?? existingData.label_name,
     label_id: body.label_id ?? existingData.label_id,
@@ -450,6 +470,8 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
     valid_from: body.valid_from ?? existingData.valid_from,
     valid_to: body.valid_to ?? existingData.valid_to,
     printer: body.printer ?? existingData.printer,
+    output_conditions: conditions ?? existingData.output_conditions ?? existingData.custom_fields ?? {},
+    custom_fields: conditions ?? existingData.custom_fields ?? existingData.output_conditions ?? {},
     created_by: existingData.created_by ?? nowUser,
     updated_by: nowUser,
   });
@@ -481,9 +503,11 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
   setField("valid_from", body.valid_from ?? null, "date");
   setField("valid_to", body.valid_to ?? null, "date");
   setField("printer", body.printer ?? null);
-  if (body.output_conditions !== undefined) {
+  if (conditions !== undefined) {
     setParts.push(`output_conditions = $${i++}::jsonb`);
-    values.push(JSON.stringify(body.output_conditions ?? {}));
+    values.push(JSON.stringify(conditions));
+    setParts.push(`custom_fields = $${i++}::jsonb`);
+    values.push(JSON.stringify(conditions));
   }
 
   setParts.push(`encrypted_payload = $${i++}`);
@@ -496,12 +520,12 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
     return res.status(400).json({ detail: "No fields provided to update" });
   }
 
-  values.push(config_id);
+  values.push(parseInt(config_id as string, 10));
 
   const sql = `
     UPDATE label_configs
     SET ${setParts.join(", ")}
-    WHERE config_id = $${i}::uuid
+    WHERE config_id = $${i}::integer
     RETURNING
       config_id::text,
       label_name,
@@ -519,6 +543,8 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
       to_char(valid_from, 'YYYY-MM-DD') as valid_from,
       to_char(valid_to, 'YYYY-MM-DD') as valid_to,
       printer,
+      custom_fields,
+      output_conditions,
       ${AUDIT_SELECT_SQL};
   `;
 
@@ -537,8 +563,8 @@ router.delete("/:config_id", async (req, res) => {
   const { config_id } = req.params;
 
   const result = await pool.query(
-    `DELETE FROM label_configs WHERE config_id = $1::uuid`,
-    [config_id]
+    `DELETE FROM label_configs WHERE config_id = $1::integer`,
+    [parseInt(config_id, 10)]
   );
 
   if (result.rowCount === 0) return res.status(404).json({ detail: "Configuration not found" });

@@ -1,4 +1,5 @@
 import { pool } from "../db";
+import { hashPassword } from "../utils/password";
 
 export function extractOutputFieldsFromCatalog(fieldsData: unknown) {
   const result: Array<{ entity: string; name: string; label: string; type: string | null }> = [];
@@ -54,8 +55,8 @@ export async function syncAllOutputDefinitionsFromContexts() {
   for (const ctx of contexts.rows) {
     const fields =
       typeof ctx.fields === "string"
-        ? JSON.parse(ctx.fields)
-        : ctx.fields || {};
+          ? JSON.parse(ctx.fields)
+          : ctx.fields || {};
     await upsertOutputDefinitionRecord(ctx.id, ctx.name, ctx.endpoint, fields, "system");
   }
 }
@@ -63,6 +64,117 @@ export async function syncAllOutputDefinitionsFromContexts() {
 export async function initApiCatalogDb(): Promise<void> {
   const client = await pool.connect();
   try {
+    // 1. Create users table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'viewer',
+        password_hash TEXT NOT NULL,
+        encrypted_payload TEXT,
+        created_by TEXT,
+        created_on TIMESTAMPTZ DEFAULT NOW(),
+        updated_by TEXT,
+        updated_on TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // Seed default configurator user if none exist
+    const userCheck = await client.query("SELECT 1 FROM users LIMIT 1");
+    if (userCheck.rowCount === 0) {
+      const passwordHash = await hashPassword("pass1234");
+      await client.query(
+        `INSERT INTO users (email, name, role, password_hash, created_by, created_on, updated_by, updated_on)
+         VALUES ($1, $2, $3, $4, 'system', NOW(), 'system', NOW())`,
+        ["configurator@test.com", "Configurator", "configurator", passwordHash]
+      );
+      console.log("[db] Seeded default configurator user");
+    }
+
+    // 2. Create events table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS events (
+        event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_number SERIAL,
+        source TEXT,
+        context TEXT,
+        entity_key TEXT,
+        event_type TEXT,
+        triggered_by TEXT,
+        print_to_file TEXT,
+        form TEXT,
+        payload TEXT,
+        status TEXT DEFAULT 'Pending',
+        event_timestamp TIMESTAMPTZ DEFAULT NOW(),
+        duration_ms INTEGER,
+        outputs INTEGER DEFAULT 0,
+        error_message TEXT,
+        encrypted_payload TEXT,
+        created_by TEXT,
+        created_on TIMESTAMPTZ DEFAULT NOW(),
+        updated_by TEXT,
+        updated_on TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // 3. Create outputs table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS outputs (
+        output_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID REFERENCES events(event_id) ON DELETE CASCADE,
+        form_id TEXT,
+        printer TEXT,
+        format TEXT,
+        status TEXT DEFAULT 'Pending',
+        retries INTEGER DEFAULT 0,
+        duration INTEGER,
+        error_message TEXT,
+        rendered_output TEXT,
+        encrypted_payload TEXT,
+        output_number SERIAL,
+        document_json TEXT,
+        completed_at TIMESTAMPTZ,
+        created_by TEXT,
+        created_on TIMESTAMPTZ DEFAULT NOW(),
+        updated_by TEXT,
+        updated_on TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // 4. Create simulation_master table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS simulation_master (
+        id SERIAL PRIMARY KEY,
+        simulation_name TEXT NOT NULL,
+        context TEXT NOT NULL,
+        form TEXT,
+        input_values JSONB DEFAULT '{}'::jsonb,
+        encrypted_payload TEXT,
+        created_by TEXT,
+        created_on TIMESTAMPTZ DEFAULT NOW(),
+        updated_by TEXT,
+        updated_on TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // 5. Create logs_audit table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS logs_audit (
+        log_id SERIAL PRIMARY KEY,
+        level TEXT NOT NULL,
+        service TEXT NOT NULL,
+        message TEXT NOT NULL,
+        username TEXT,
+        trace_id TEXT,
+        metadata JSONB,
+        event_timestamp TIMESTAMPTZ DEFAULT NOW(),
+        created_by TEXT,
+        created_on TIMESTAMPTZ DEFAULT NOW(),
+        updated_by TEXT,
+        updated_on TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
     await client.query(`
       CREATE TABLE IF NOT EXISTS contexts (
         id SERIAL PRIMARY KEY,

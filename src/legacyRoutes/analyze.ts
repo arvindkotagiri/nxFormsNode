@@ -24,8 +24,8 @@ Return a JSON list of objects. Each object must have:
 5. "value": The original text/content seen in the image for this field.
 
 CRITICAL:
-- If you see a logo, identify it as "content_type": "logo".
-- If you see a signature, identify it as "content_type": "signature".
+- If you see a logo, identify it as "content_type": "logo". Ensure the box_2d coordinates encompass the ENTIRE graphic with a tiny margin (do not truncate or cut off the logo edges).
+- If you see a signature, identify it as "content_type": "signature". Ensure the box_2d coordinates encompass the ENTIRE signature graphic (do not crop too tightly).
 
 CRITICAL INSTRUCTIONS FOR TABLES:
 - If a table is present, create ONE object with "content_type": "table".
@@ -89,7 +89,10 @@ async function cropAndSave(imageBuffer, box_2d, field_name) {
   let right = (xmax * width) / 1000;
   let bottom = (ymax * height) / 1000;
 
-  const padding = 5;
+  let padding = 5;
+  if (field_name.toLowerCase().includes("logo") || field_name.toLowerCase().includes("signature")) {
+    padding = 20; // Enlarge cropped box to prevent logo/signature clipping
+  }
   left = Math.max(0, left - padding);
   top = Math.max(0, top - padding);
   right = Math.min(width, right + padding);

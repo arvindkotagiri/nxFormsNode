@@ -56,7 +56,7 @@ router.get("/", requireUser, async (_req, res) => {
   }
 });
 
-router.get("/:id/image", requireUser, async (req, res) => {
+router.get("/:id/image", async (req, res) => {
   try {
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const row = await getImageBlobById(id);

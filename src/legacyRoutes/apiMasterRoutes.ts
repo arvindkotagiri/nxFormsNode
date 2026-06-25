@@ -87,7 +87,7 @@ router.post('/catalog', async (req, res) => {
       data.password || null,
       data.application || null,
       data.environment || null,
-      data.client !== undefined ? data.client : null,
+      (data.client !== undefined && data.client !== '') ? data.client : null,
     ];
 
     const result = await pool.query(insertQuery, values);
@@ -132,7 +132,7 @@ router.put('/catalog/:api_id', async (req, res) => {
       data.password || null,
       data.application || null,
       data.environment || null,
-      data.client !== undefined ? data.client : null,
+      (data.client !== undefined && data.client !== '') ? data.client : null,
       api_id,
     ];
 

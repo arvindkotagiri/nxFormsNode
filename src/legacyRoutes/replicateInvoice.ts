@@ -129,40 +129,128 @@ function applyAssetReplacements(htmlContent, crops) {
   const signatureCrops = Object.entries(crops).filter(([k]) => k.toLowerCase().includes("signature")).sort((a, b) => a[0].localeCompare(b[0]));
   const logoCrops = Object.entries(crops).filter(([k]) => k.toLowerCase().includes("logo")).sort((a, b) => a[0].localeCompare(b[0]));
 
-  const performReplacement = (foundList, cropList) => {
+  const performReplacement = (foundList: any[], cropList: any[], chunkType: string, barcodeType: string | null = null) => {
     foundList.forEach((item, idx) => {
       const tag = item.tag;
-      let cropVal = idx < cropList.length ? cropList[idx][1] : (cropList.length > 0 ? cropList[0][1] : null);
-      if (cropVal) {
-        if (cropVal.startsWith('data:')) {
-          cropVal = cropVal.split(',')[1];
+      let replacementSrc = "";
+
+      if (chunkType === 'barcode') {
+        if (barcodeType === 'qr') {
+          replacementSrc = `data:image/svg+xml;utf8,${encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="150" height="150" viewBox="0 0 150 150"><rect width="150" height="150" fill="white"/><g fill="black"><rect x="15" y="15" width="30" height="30"/><rect x="25" y="25" width="10" height="10" fill="white"/><rect x="105" y="15" width="30" height="30"/><rect x="115" y="25" width="10" height="10" fill="white"/><rect x="15" y="105" width="30" height="30"/><rect x="25" y="115" width="10" height="10" fill="white"/><rect x="65" y="65" width="20" height="20"/><rect x="95" y="95" width="20" height="20"/></g></svg>'
+          )}`;
+        } else {
+          replacementSrc = `data:image/svg+xml;utf8,${encodeURIComponent(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80" viewBox="0 0 200 80"><rect width="200" height="80" fill="white"/><g fill="black">${
+              Array.from({ length: 25 }).map((_, i) => `<rect x="${10 + i * 7}" y="10" width="${i % 3 === 0 ? 4 : (i % 2 === 0 ? 2 : 1)}" height="50"/>`).join("")
+            }</g></svg>`
+          )}`;
         }
-        let newTag = tag.replace(/src=["']([^"']*)["']/i, `src="data:image/png;base64,${cropVal}"`);
+      } else {
+        let cropVal = idx < cropList.length ? cropList[idx][1] : (cropList.length > 0 ? cropList[0][1] : null);
+        if (cropVal) {
+          if (cropVal.startsWith('data:')) {
+            cropVal = cropVal.split(',')[1];
+          }
+          replacementSrc = `data:image/png;base64,${cropVal}`;
+        }
+      }
+
+      if (replacementSrc) {
+        let newTag = tag.replace(/src=["']([^"']*)["']/i, `src="${replacementSrc}"`);
         if (!newTag.includes('data-editor-element')) {
           newTag = newTag.replace('<img', '<img data-editor-element="true"');
+        }
+        if (!newTag.includes('data-chunk-type')) {
+          newTag = newTag.replace('<img', `<img data-chunk-type="${chunkType}"`);
+        }
+        if (barcodeType && !newTag.includes('data-barcode-type')) {
+          newTag = newTag.replace('<img', `<img data-barcode-type="${barcodeType}"`);
         }
         htmlContent = htmlContent.replace(tag, newTag);
       }
     });
   };
 
-  performReplacement(barcodesFound, barcodeCrops);
-  performReplacement(qrcodesFound, qrcodeCrops);
-  performReplacement(signaturesFound, signatureCrops);
-  performReplacement(logosFound, logoCrops);
+  performReplacement(barcodesFound, barcodeCrops, 'barcode', 'code128');
+  performReplacement(qrcodesFound, qrcodeCrops, 'barcode', 'qr');
+  performReplacement(signaturesFound, signatureCrops, 'signature');
+  performReplacement(logosFound, logoCrops, 'logo');
 
   for (let [k, v] of Object.entries(crops)) {
     if (v) {
-      if (v.startsWith('data:')) v = v.split(',')[1];
-      const b64Src = `data:image/png;base64,${v}`;
+      let b64Src = "";
+      const isQr = k.toLowerCase().includes("qrcode") || k.toLowerCase().includes("qr_code");
+      const isBarcode = k.toLowerCase().includes("barcode");
+      if (isQr) {
+        b64Src = `data:image/svg+xml;utf8,${encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="150" height="150" viewBox="0 0 150 150"><rect width="150" height="150" fill="white"/><g fill="black"><rect x="15" y="15" width="30" height="30"/><rect x="25" y="25" width="10" height="10" fill="white"/><rect x="105" y="15" width="30" height="30"/><rect x="115" y="25" width="10" height="10" fill="white"/><rect x="15" y="105" width="30" height="30"/><rect x="25" y="115" width="10" height="10" fill="white"/><rect x="65" y="65" width="20" height="20"/><rect x="95" y="95" width="20" height="20"/></g></svg>'
+        )}`;
+      } else if (isBarcode) {
+        b64Src = `data:image/svg+xml;utf8,${encodeURIComponent(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80" viewBox="0 0 200 80"><rect width="200" height="80" fill="white"/><g fill="black">${
+            Array.from({ length: 25 }).map((_, i) => `<rect x="${10 + i * 7}" y="10" width="${i % 3 === 0 ? 4 : (i % 2 === 0 ? 2 : 1)}" height="50"/>`).join("")
+          }</g></svg>`
+        )}`;
+      } else {
+        let cleanB64 = v;
+        if (cleanB64.startsWith('data:')) {
+          cleanB64 = cleanB64.split(',')[1];
+        }
+        b64Src = `data:image/png;base64,${cleanB64}`;
+      }
+
+      const matchNum = k.match(/\d+/);
       const searchTerms = [
         `${k.toUpperCase()}_PLACEHOLDER`,
         `${k.toUpperCase()}_PLACEHOLDER_1`,
-        `${k.toUpperCase()}_1_PLACEHOLDER`
+        `${k.toUpperCase()}_1_PLACEHOLDER`,
+        ...(matchNum ? [
+          `${k.replace(/\d+/, "").toUpperCase()}PLACEHOLDER_${matchNum[0]}`,
+          `${k.replace(/\d+/, "").toUpperCase()}_PLACEHOLDER_${matchNum[0]}`,
+          `${k.replace(/\d+/, "").toUpperCase()}_${matchNum[0]}_PLACEHOLDER`
+        ] : [])
       ];
       for (const term of searchTerms) {
         htmlContent = htmlContent.split(term).join(b64Src);
       }
+    }
+  }
+
+  // Post-process HTML to stamp proper editor attributes on all output <img> tags
+  const imgTagsPost = htmlContent.match(/<img[^>]*>/gi) || [];
+  for (const tag of imgTagsPost) {
+    const srcMatch = tag.match(/src=["']([^"']*)["']/i);
+    const altMatch = tag.match(/alt=["']([^"']*)["']/i);
+    const idMatch = tag.match(/id=["']([^"']*)["']/i);
+    const src = srcMatch ? srcMatch[1] : "";
+    const alt = altMatch ? altMatch[1] : "";
+    const id = idMatch ? idMatch[1] : "";
+
+    let chunkType = "";
+    let barcodeType = "";
+
+    if (src.includes("image/svg+xml") || src.includes("qrcode") || src.includes("barcode") || alt.toLowerCase().includes("barcode") || id.toLowerCase().includes("barcode")) {
+      chunkType = "barcode";
+      barcodeType = (src.includes("width=\"150\"") || src.includes("qrcode") || alt.toLowerCase().includes("qr")) ? "qr" : "code128";
+    } else if (src.includes("logo") || alt.toLowerCase().includes("logo") || id.toLowerCase().includes("logo")) {
+      chunkType = "logo";
+    } else if (src.includes("signature") || alt.toLowerCase().includes("signature") || id.toLowerCase().includes("signature")) {
+      chunkType = "signature";
+    }
+
+    if (chunkType) {
+      let newTag = tag;
+      if (!newTag.includes("data-editor-element")) {
+        newTag = newTag.replace("<img", '<img data-editor-element="true"');
+      }
+      if (!newTag.includes("data-chunk-type")) {
+        newTag = newTag.replace("<img", `<img data-chunk-type="${chunkType}"`);
+      }
+      if (chunkType === "barcode" && !newTag.includes("data-barcode-type")) {
+        newTag = newTag.replace("<img", `<img data-barcode-type="${barcodeType}"`);
+      }
+      htmlContent = htmlContent.replace(tag, newTag);
     }
   }
 
