@@ -123,6 +123,8 @@ export async function callLLM(processName, prompt, systemInstruction = null, ima
       JSON.parse(clean);
     } catch (e) {
       console.warn(`[callLLM] JSON.parse failed on clean response, attempting substring extraction... Error: ${e.message}`);
+      console.warn(`[callLLM] Clean response length: ${clean.length} characters.`);
+      console.warn(`[callLLM] End of clean response: ${clean.substring(Math.max(0, clean.length - 200))}`);
       const firstCurly = clean.indexOf('{');
       const firstSquare = clean.indexOf('[');
       let startIndex = -1;
@@ -250,7 +252,7 @@ async function callAnthropic(modelId, apiKey, prompt, systemInstruction, imageBy
   console.log(`   [ANTHROPIC] Sending content to ${modelId} (Image: ${!!imageBytes})`);
   const response = await anthropic.messages.create({
     model: modelId,
-    max_tokens: 4096,
+    max_tokens: 8192,
     system: systemInstruction || undefined,
     messages: [{ role: 'user', content }],
     temperature: 0.0
