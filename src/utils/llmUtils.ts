@@ -99,15 +99,58 @@ export async function callLLM(processName, prompt, systemInstruction = null, ima
   console.log(`    [INFO] Prompt size: ${prompt.length} chars`);
   if (systemInstruction) console.log(`    [INFO] System instruction size: ${systemInstruction.length} chars`);
 
+  let result;
   if (provider === 'google') {
-    return callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType);
+    result = await callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType);
   } else if (provider === 'openai') {
-    return callOpenAI(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType);
+    result = await callOpenAI(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType);
   } else if (provider === 'anthropic') {
-    return callAnthropic(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType);
+    result = await callAnthropic(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType);
   } else {
     throw new Error(`Unsupported provider: ${provider}`);
   }
+
+  if (responseMimeType === 'application/json') {
+    let clean = result.trim();
+    
+    // 1. Remove markdown code fences if present
+    if (clean.startsWith('```')) {
+      clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    }
+    
+    // 2. If it still doesn't parse directly, try to locate the first '{' or '[' and last '}' or ']'
+    try {
+      JSON.parse(clean);
+    } catch (e) {
+      console.warn(`[callLLM] JSON.parse failed on clean response, attempting substring extraction... Error: ${e.message}`);
+      const firstCurly = clean.indexOf('{');
+      const firstSquare = clean.indexOf('[');
+      let startIndex = -1;
+      let endIndex = -1;
+      
+      if (firstCurly !== -1 && (firstSquare === -1 || firstCurly < firstSquare)) {
+        startIndex = firstCurly;
+        endIndex = clean.lastIndexOf('}');
+      } else if (firstSquare !== -1) {
+        startIndex = firstSquare;
+        endIndex = clean.lastIndexOf(']');
+      }
+      
+      if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+        const potentialJson = clean.substring(startIndex, endIndex + 1);
+        try {
+          JSON.parse(potentialJson);
+          clean = potentialJson;
+          console.log("[callLLM] Successfully extracted valid JSON from raw response.");
+        } catch (innerError) {
+          console.error("[callLLM] Substring extraction also failed to parse as JSON:", innerError.message);
+        }
+      }
+    }
+    return clean;
+  }
+
+  return result;
 }
 
 async function callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType) {
