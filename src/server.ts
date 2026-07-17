@@ -14,33 +14,7 @@ if (typeof process !== "undefined" && !(process as any).getBuiltinModule) {
 import DOMMatrix from 'dommatrix';
 (globalThis as any).DOMMatrix = DOMMatrix;
 
-if (!(globalThis as any).ImageData) {
-  (globalThis as any).ImageData = class ImageData {
-    width: number;
-    height: number;
-    data: Uint8ClampedArray;
-    constructor(width: number, height: number, data?: Uint8ClampedArray) {
-      this.width = width;
-      this.height = height;
-      this.data = data || new Uint8ClampedArray(width * height * 4);
-    }
-  };
-}
 
-if (!(globalThis as any).Path2D) {
-  (globalThis as any).Path2D = class Path2D {
-    addPath() {}
-    closePath() {}
-    moveTo() {}
-    lineTo() {}
-    bezierCurveTo() {}
-    quadraticCurveTo() {}
-    arc() {}
-    arcTo() {}
-    ellipse() {}
-    rect() {}
-  };
-}
 
 import express from "express";
 import cors from "cors";
