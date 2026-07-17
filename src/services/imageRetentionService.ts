@@ -196,7 +196,14 @@ export async function getImageBlobById(
       const decrypted = maybeDecryptPayload(result.rows[0].encrypted_payload) as any;
       if (decrypted) {
         mimeType = decrypted.mime_type ?? mimeType;
-        imageData = decrypted.image_data ?? imageData;
+        let rawData = decrypted.image_data ?? imageData;
+        if (rawData && typeof rawData === 'object' && rawData.type === 'Buffer' && Array.isArray(rawData.data)) {
+          imageData = Buffer.from(rawData.data);
+        } else if (Buffer.isBuffer(rawData)) {
+          imageData = rawData;
+        } else if (rawData) {
+          imageData = Buffer.from(rawData);
+        }
       }
     } catch (err) {
       console.warn("Failed to decrypt image blob payload:", err);
