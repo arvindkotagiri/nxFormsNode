@@ -161,6 +161,17 @@ function applyAssetReplacements(htmlContent, crops) {
             cropVal = cropVal.split(',')[1];
           }
           replacementSrc = `data:image/png;base64,${cropVal}`;
+        } else {
+          // If no cropped image is available, generate a beautiful inline SVG placeholder so it never breaks!
+          if (chunkType === 'logo') {
+            replacementSrc = `data:image/svg+xml;utf8,${encodeURIComponent(
+              '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="80" viewBox="0 0 300 80"><rect width="300" height="80" fill="%23f8fafc" rx="8" stroke="%23e2e8f0" stroke-width="2"/><text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="bold" fill="%2394a3b8">Company Logo Placeholder</text></svg>'
+            )}`;
+          } else if (chunkType === 'signature') {
+            replacementSrc = `data:image/svg+xml;utf8,${encodeURIComponent(
+              '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60" viewBox="0 0 200 60"><rect width="200" height="60" fill="%23f8fafc" rx="8" stroke="%23e2e8f0" stroke-width="2"/><text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="bold" fill="%2394a3b8">Signature Placeholder</text></svg>'
+            )}`;
+          }
         }
       }
 
