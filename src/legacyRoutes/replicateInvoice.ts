@@ -12,30 +12,35 @@ const upload = multer({
 
 const PROMPT_PRECISION = `
 Role: Expert Screenshot-to-Code Engineer.
-Task: Generate a PIXEL-PERFECT HTML replica of the attached image.
+Task: Generate a PIXEL-PERFECT, PRINT-FLEXIBLE HTML replica of the attached image.
 
-STRICT REQUIREMENTS:
-1. DIMENSIONS: Use a fixed container of 816px (width) by 1056px (height). This is exactly 8.5in x 11in at 96DPI.
-2. POSITIONING: Every single element (text, line, image) MUST use \`position: absolute\`.
-3. COORDINATES: Use \`px\` values for \`top\`, \`left\`, \`width\`, \`height\`, \`font-size\`, and \`line-height\`. Do NOT use percentages.
-4. STYLING: Use Tailwind CSS classes where possible, but use inline \`style="..."\` for precise pixel positioning and dimensions.
-5. FONT ACCURACY: Match the font weight and size exactly. If a text is 12px and bold, use \`text-[12px] font-bold\`.
-6. BORDERS & LINES: Horizontal and vertical lines must be 1px or 2px divs with a background color that matches the document.
-7. ASSETS: 
-   - <img src="LOGO_PLACEHOLDER" style="position: absolute; ...">
-   - <img src="SIGNATURE_PLACEHOLDER" style="position: absolute; ...">
-   - <img src="BARCODE_PLACEHOLDER" alt="Barcode" style="position: absolute; ..."> (Use BARCODE_PLACEHOLDER, or BARCODE_PLACEHOLDER_1, BARCODE_PLACEHOLDER_2 if there are multiple barcodes)
-   - <img src="QRCODE_PLACEHOLDER" alt="QR Code" style="position: absolute; ..."> (Use QRCODE_PLACEHOLDER, or QRCODE_PLACEHOLDER_1, QRCODE_PLACEHOLDER_2 if there are multiple QR codes)
-
-8. BARCODES & QR CODES: Do NOT represent barcodes as collections of individual line divs, and do NOT represent QR codes as collections of grid cells or table columns. You MUST represent them strictly as absolute-positioned \`<img>\` tags using BARCODE_PLACEHOLDER or QRCODE_PLACEHOLDER as their \`src\`.
+STRICT LAYOUT & PRINTING REQUIREMENTS:
+1. DIMENSIONS: Use a fixed container of 816px (width) by 1056px (height) per page. This is exactly 8.5in x 11in (US Letter) at 96DPI.
+2. POSITIONING:
+   - Header, static text blocks, and metadata sections MUST be positioned using \`position: absolute\` with precise \`px\` values for \`top\`, \`left\`, \`width\`, and \`height\`.
+   - The main line-item table MUST be a standard HTML \`<table>\` element. The table rows and cells MUST NOT be absolutely positioned. 
+3. TABLE FLOW & PAGINATION RULES:
+   - The table MUST support dynamic row additions at runtime.
+   - You MUST apply the following print-flexibility CSS classes or styles to the table:
+     - \`table { width: 100%; page-break-inside: auto; }\`
+     - \`tr { page-break-inside: avoid; page-break-after: auto; }\`
+     - \`thead { display: table-header-group; }\` (so headers repeat on new pages if the table spans multiple pages)
+     - \`tfoot { display: table-footer-group; }\`
+   - If the table overflows onto multiple pages, it should stop 15px above the page footer and break to the next page.
+4. FOOTER POSITIONING:
+   - The document footer MUST be placed inside a container with class \`footer\` at the bottom of the page.
+   - For print styles, use CSS to ensure the footer stays at the bottom:
+     \`@media print { .footer { position: fixed; bottom: 0; left: 0; width: 100%; page-break-before: avoid; } }\`
+5. ASSETS & PLACEMARKS (CRITICAL FOR MULTI-LLM CONSISTENCY):
+   - You MUST represent logo, signatures, barcodes, and QR codes using standard \`<img>\` tags with specific \`data-chunk-type\` attributes:
+     - Logo: <img data-chunk-type="logo" src="LOGO_PLACEHOLDER" alt="Logo" style="position: absolute; ...">
+     - Signature: <img data-chunk-type="signature" src="SIGNATURE_PLACEHOLDER" alt="Signature" style="position: absolute; ...">
+     - Barcode (Code128): <img data-chunk-type="barcode" data-barcode-type="code128" src="BARCODE_PLACEHOLDER" alt="Barcode" style="position: absolute; ...">
+     - QR Code: <img data-chunk-type="barcode" data-barcode-type="qr" src="QRCODE_PLACEHOLDER" alt="QR Code" style="position: absolute; ...">
+   - Do NOT represent barcodes or QR codes as nested divs, tables, or SVG paths. Use the \`<img>\` placeholder tags exactly as defined above.
 
 TEMPLATE FIELDS:
 Replace all dynamic text with {{fieldName}} while keeping the exact position and style of the original text.
-
-EXECUTION:
-- Imagine a grid of 816x1056 pixels over the image.
-- Map every visual element to its exact X/Y coordinate.
-- The output must pass a visual overlay test.
 
 Return ONLY a JSON object: {"full_invoice_html": "<div style='position: relative; width: 816px; height: 1056px; background: white;'>...</div>"}
 `;
@@ -87,20 +92,23 @@ function applyAssetReplacements(htmlContent, crops) {
     const altMatch = tag.match(/alt=["']([^"']*)["']/i);
     const idMatch = tag.match(/id=["']([^"']*)["']/i);
     const styleMatch = tag.match(/style=["']([^"']*)["']/i);
+    const chunkTypeMatch = tag.match(/data-chunk-type=["']([^"']*)["']/i);
+    const barcodeTypeMatch = tag.match(/data-barcode-type=["']([^"']*)["']/i);
 
     const src = srcMatch ? srcMatch[1] : "";
     const alt = altMatch ? altMatch[1] : "";
     const imgId = idMatch ? idMatch[1] : "";
     const style = styleMatch ? styleMatch[1] : "";
+    const chunkTypeAttr = chunkTypeMatch ? chunkTypeMatch[1] : "";
+    const barcodeTypeAttr = barcodeTypeMatch ? barcodeTypeMatch[1] : "";
 
     const isWatermark = src.toLowerCase().includes("watermark") || imgId.toLowerCase().includes("watermark") || alt.toLowerCase().includes("watermark");
     if (isWatermark) continue;
 
-    let isLogo = src.toLowerCase().includes("logo") || alt.toLowerCase().includes("logo") || imgId.toLowerCase().includes("logo") || src.toLowerCase().includes("logo_placeholder");
-    let isSig = src.toLowerCase().includes("signature") || alt.toLowerCase().includes("signature") || imgId.toLowerCase().includes("signature") || src.toLowerCase().includes("signature_placeholder");
-    
-    let isBarcode = src.toLowerCase().includes("barcode") || alt.toLowerCase().includes("barcode") || imgId.toLowerCase().includes("barcode") || src.toLowerCase().includes("barcode_placeholder") || tag.toLowerCase().includes("barcode");
-    let isQrcode = src.toLowerCase().includes("qrcode") || src.toLowerCase().includes("qr_code") || src.toLowerCase().includes("qr") || alt.toLowerCase().includes("qrcode") || imgId.toLowerCase().includes("qrcode") || tag.toLowerCase().includes("qrcode");
+    let isLogo = chunkTypeAttr === "logo" || src.toLowerCase().includes("logo") || alt.toLowerCase().includes("logo") || imgId.toLowerCase().includes("logo") || src.toLowerCase().includes("logo_placeholder");
+    let isSig = chunkTypeAttr === "signature" || src.toLowerCase().includes("signature") || alt.toLowerCase().includes("signature") || imgId.toLowerCase().includes("signature") || src.toLowerCase().includes("signature_placeholder");
+    let isBarcode = (chunkTypeAttr === "barcode" && barcodeTypeAttr !== "qr") || src.toLowerCase().includes("barcode") || alt.toLowerCase().includes("barcode") || imgId.toLowerCase().includes("barcode") || src.toLowerCase().includes("barcode_placeholder") || tag.toLowerCase().includes("barcode");
+    let isQrcode = (chunkTypeAttr === "barcode" && barcodeTypeAttr === "qr") || src.toLowerCase().includes("qrcode") || src.toLowerCase().includes("qr_code") || src.toLowerCase().includes("qr") || alt.toLowerCase().includes("qrcode") || imgId.toLowerCase().includes("qrcode") || tag.toLowerCase().includes("qrcode");
 
     const topMatch = style.match(/top:\s*([0-9.-]+)px/i);
     const topVal = topMatch ? parseFloat(topMatch[1]) : 0.0;
