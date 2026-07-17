@@ -1,3 +1,14 @@
+// Polyfill process.getBuiltinModule for Node 18 compatibility with pdfjs-dist
+if (typeof process !== "undefined" && !(process as any).getBuiltinModule) {
+  (process as any).getBuiltinModule = function (name: string) {
+    try {
+      return require(name);
+    } catch (e) {
+      return undefined;
+    }
+  };
+}
+
 // Polyfill browser globals for pdfjs-dist in Node.js
 // @ts-ignore
 import DOMMatrix from 'dommatrix';
