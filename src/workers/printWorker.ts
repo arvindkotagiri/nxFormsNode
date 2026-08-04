@@ -12,6 +12,7 @@ import { pool } from "../db";
 import net from "net";
 import puppeteer, { Browser } from "puppeteer";
 import * as TF from "../helper/transformations";
+import Handlebars from "handlebars";
 
 const MAX_RETRIES = Number(process.env.MAX_RETRIES ?? 3);
 
@@ -31,6 +32,7 @@ interface LabelMaster {
   field_mapping: Record<string, string> | null;
   // field_mapping stores { templatePlaceholder: documentJsonField }
   // e.g. { "Amount": "Amount", "CheckDate": "CheckDate" }
+  table_config: any | null; // SAP-style entity set loop configuration
 }
 
 // ── Apply transformations ──────────────────────────────────────────────────────────
@@ -227,7 +229,340 @@ function substituteValues(
   return rendered;
 }
 
-// ── Mode-specific render functions ─────────────────────────────────────────────
+// ── SAP-Style Table Loop Engine ────────────────────────────────────────────────
+//
+// When a template has <table data-table-config="..."> elements, the engine:
+
+function findAndUpdateEntitySetArray(data: any, key: string, updateFn: (arr: any[]) => any[]): boolean {
+  if (!data || typeof data !== 'object') return false;
+
+  // 1. Direct match (e.g. data[key] is array)
+  if (Array.isArray(data[key])) {
+    data[key] = updateFn(data[key]);
+    return true;
+  }
+
+  // 2. Direct match with results wrapper (e.g. data[key].results is array)
+  if (data[key] && typeof data[key] === 'object' && Array.isArray(data[key].results)) {
+    data[key].results = updateFn(data[key].results);
+    return true;
+  }
+
+  // 3. Recursive search
+  for (const [k, v] of Object.entries(data)) {
+    if (v && typeof v === 'object') {
+      const found = findAndUpdateEntitySetArray(v, key, updateFn);
+      if (found) return true;
+    }
+  }
+
+  return false;
+}
+
+function injectHandlebarsTableLoops(html: string, tableConfigs: TableLoopConfig[]): string {
+  let updatedHtml = html;
+
+  // Remove any empty/broken loops like {{#each items}} {{/each}} outside the table first
+  updatedHtml = updatedHtml.replace(/\{\{\s*#each[^}]*\}\}\s*\{\{\s*\/each\s*\}\}/gi, '');
+
+  for (const cfg of tableConfigs) {
+    if (!cfg.entitySetKey) continue;
+
+    let replaced = false;
+
+    const wrapTbody = (tbodyHtml: string): string => {
+      let cleanBody = tbodyHtml.replace(/\{\{\s*#each[^}]*\}\}/gi, '').replace(/\{\{\s*\/each\s*\}\}/gi, '');
+
+      if (cfg.innerEntitySetKey) {
+        // Nested loop!
+        const rowRegex = /(<tr[^>]*>[\s\S]*?<\/tr>)/gi;
+        const rows: string[] = [];
+        let m;
+        while ((m = rowRegex.exec(cleanBody)) !== null) {
+          rows.push(m[1]);
+        }
+
+        if (rows.length === 0) return cleanBody;
+
+        const isItemRow = (rowHtml: string): boolean => {
+          const lower = rowHtml.toLowerCase();
+          if (lower.includes('group-header') || lower.includes('group_header') || lower.includes('class="group"')) return false;
+          if (lower.includes('subtotal') || lower.includes('total-row') || lower.includes('total_row')) return false;
+          if (lower.includes('item-row') || lower.includes('row-item') || lower.includes('item_row') || lower.includes('class="item"')) return true;
+          if (lower.includes('subtotal_')) return false;
+          return true;
+        };
+
+        let newBody = `{{#each ${cfg.entitySetKey}}}`;
+        let inInnerLoop = false;
+
+        for (const row of rows) {
+          const isItem = isItemRow(row);
+          if (isItem && !inInnerLoop) {
+            newBody += `{{#each this.${cfg.innerEntitySetKey}}}`;
+            inInnerLoop = true;
+          } else if (!isItem && inInnerLoop) {
+            newBody += `{{/each}}`;
+            inInnerLoop = false;
+          }
+          newBody += row;
+        }
+
+        if (inInnerLoop) {
+          newBody += `{{/each}}`;
+        }
+        newBody += `{{/each}}`;
+        return newBody;
+      } else {
+        // Flat loop!
+        const loopStart = `{{#each ${cfg.entitySetKey}}}`;
+        const loopEnd = `{{/each}}`;
+        return `${loopStart}${cleanBody}${loopEnd}`;
+      }
+    };
+    
+    // 1. Try to match by data-table-config first
+    const configRegex = /<table([^>]*data-table-config="([^"]*)"[^>]*)>([\s\S]*?)<\/table>/gi;
+    updatedHtml = updatedHtml.replace(configRegex, (match: string, tableAttr: string, configJson: string, tableContent: string) => {
+      try {
+        const decoded = configJson.replace(/&quot;/g, '"').replace(/&#34;/g, '"');
+        const parsedCfg: TableLoopConfig = JSON.parse(decoded);
+        if (parsedCfg.entitySetKey === cfg.entitySetKey) {
+          const tbodyRegex = /(<tbody[^>]*>)([\s\S]*?)(<\/tbody>)/i;
+          if (tbodyRegex.test(tableContent)) {
+            replaced = true;
+            return `<table${tableAttr}>` + tableContent.replace(tbodyRegex, (m: string, openTag: string, bodyContent: string, closeTag: string) => {
+              return `${openTag}${wrapTbody(bodyContent)}${closeTag}`;
+            }) + `</table>`;
+          }
+        }
+      } catch {}
+      return match;
+    });
+
+    if (replaced) continue;
+
+    // 2. If not matched, fall back to matching any <table> element
+    const genericTableRegex = /<table([^>]*)>([\s\S]*?)<\/table>/gi;
+    updatedHtml = updatedHtml.replace(genericTableRegex, (match: string, tableAttr: string, tableContent: string) => {
+      if (replaced) return match;
+      
+      const tbodyRegex = /(<tbody[^>]*>)([\s\S]*?)(<\/tbody>)/i;
+      if (tbodyRegex.test(tableContent)) {
+        replaced = true;
+        return `<table${tableAttr}>` + tableContent.replace(tbodyRegex, (m: string, openTag: string, bodyContent: string, closeTag: string) => {
+          return `${openTag}${wrapTbody(bodyContent)}${closeTag}`;
+        }) + `</table>`;
+      }
+      return match;
+    });
+  }
+
+  return updatedHtml;
+}
+
+//   1. Extracts the table_config JSON from the label_master column
+//   2. Pulls the named entity-set array from docData
+//   3. Applies WHERE filter conditions (AND logic)
+//   4. Sorts filtered rows according to sort_criteria
+//   5. Computes numeric subtotals for configured fields
+//   6. Injects the processed rows back into docData under the original key
+//
+// The Handlebars {{#each groups}} / {{#each this.items}} blocks in the HTML
+// then naturally loop over the pre-processed, filtered, sorted data.
+
+interface SortCriterion {
+  field: string;
+  direction: "ASC" | "DESC";
+}
+
+interface WhereCondition {
+  field: string;
+  operator: "==" | "!=" | ">" | "<" | ">=" | "<=" | "contains" | "startsWith";
+  value: string;
+}
+
+interface TableLoopConfig {
+  entitySetKey: string;
+  innerEntitySetKey?: string;
+  sortCriteria: SortCriterion[];
+  alreadySorted: boolean;
+  filters: WhereCondition[];
+  subtotalFields: string[];
+}
+
+function evaluateFilter(row: Record<string, any>, condition: WhereCondition): boolean {
+  const rawVal = row[condition.field];
+  const rowVal = String(rawVal ?? "");
+  const condVal = condition.value;
+  switch (condition.operator) {
+    case "==": return rowVal == condVal;
+    case "!=": return rowVal != condVal;
+    case ">":  return parseFloat(rowVal) > parseFloat(condVal);
+    case "<":  return parseFloat(rowVal) < parseFloat(condVal);
+    case ">=": return parseFloat(rowVal) >= parseFloat(condVal);
+    case "<=": return parseFloat(rowVal) <= parseFloat(condVal);
+    case "contains":   return rowVal.includes(condVal);
+    case "startsWith": return rowVal.startsWith(condVal);
+    default:   return true;
+  }
+}
+
+function sortRows(rows: any[], sortCriteria: SortCriterion[]): any[] {
+  return [...rows].sort((a, b) => {
+    for (const sort of sortCriteria) {
+      const aVal = String(a[sort.field] ?? "");
+      const bVal = String(b[sort.field] ?? "");
+      const cmp = aVal.localeCompare(bVal, undefined, { numeric: true });
+      if (cmp !== 0) return sort.direction === "DESC" ? -cmp : cmp;
+    }
+    return 0;
+  });
+}
+
+function computeSubtotals(rows: any[], subtotalFields: string[]): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const field of subtotalFields) {
+    totals[`subtotal_${field}`] = rows.reduce((sum, row) => {
+      const raw = String(row[field] ?? "0").replace(/[^0-9.-]/g, "");
+      return sum + (parseFloat(raw) || 0);
+    }, 0);
+  }
+  return totals;
+}
+
+/**
+ * Applies table loop configs to docData. Returns an enriched copy of docData
+ * where entity-set arrays are pre-filtered, pre-sorted, and subtotals are injected.
+ */
+function applyTableLoopConfigs(
+  docData: Record<string, any>,
+  tableConfigs: TableLoopConfig[]
+): Record<string, any> {
+  const enriched: Record<string, any> = JSON.parse(JSON.stringify(docData));
+
+  for (const cfg of tableConfigs) {
+    if (!cfg.entitySetKey) continue;
+
+    let foundArray: any[] = [];
+    const collectArray = (arr: any[]) => {
+      foundArray = arr;
+      return arr;
+    };
+    findAndUpdateEntitySetArray(enriched, cfg.entitySetKey, collectArray);
+
+    const outerRows: any[] = [...foundArray];
+
+    console.log(`[TableLoop] Entity set "${cfg.entitySetKey}" — ${outerRows.length} groups`);
+
+    // Process each group (outer loop)
+    const processedGroups = outerRows.map((group: any) => {
+      const processedGroup = { ...group };
+
+      if (cfg.innerEntitySetKey) {
+        // ── Nested: outer = groups, inner = items ─────────────────────────────
+        let innerRows: any[] = [];
+        if (group[cfg.innerEntitySetKey] && Array.isArray(group[cfg.innerEntitySetKey])) {
+          innerRows = [...group[cfg.innerEntitySetKey]];
+        } else if (group[cfg.innerEntitySetKey] && Array.isArray(group[cfg.innerEntitySetKey].results)) {
+          innerRows = [...group[cfg.innerEntitySetKey].results];
+        }
+
+        // 1. Apply WHERE filters to inner rows
+        if (cfg.filters && cfg.filters.length > 0) {
+          innerRows = innerRows.filter(row =>
+            cfg.filters.every(f => evaluateFilter(row, f))
+          );
+          console.log(`[TableLoop]   After filter: ${innerRows.length} inner rows`);
+        }
+
+        // 2. Sort inner rows
+        if (!cfg.alreadySorted && cfg.sortCriteria && cfg.sortCriteria.length > 0) {
+          innerRows = sortRows(innerRows, cfg.sortCriteria);
+        }
+
+        // 3. Compute subtotals and inject into the group
+        if (cfg.subtotalFields && cfg.subtotalFields.length > 0) {
+          const subtotals = computeSubtotals(innerRows, cfg.subtotalFields);
+          for (const [k, v] of Object.entries(subtotals)) {
+            processedGroup[k] = v;
+          }
+        }
+
+        if (group[cfg.innerEntitySetKey] && Array.isArray(group[cfg.innerEntitySetKey].results)) {
+          processedGroup[cfg.innerEntitySetKey] = { results: innerRows };
+        } else {
+          processedGroup[cfg.innerEntitySetKey] = innerRows;
+        }
+      }
+
+      return processedGroup;
+    });
+
+    const updateTargetArray = (arr: any[]) => {
+      if (!cfg.innerEntitySetKey) {
+        // Flat loop case: apply filters+sort to the outer rows themselves
+        let flatRows = processedGroups;
+
+        if (cfg.filters && cfg.filters.length > 0) {
+          flatRows = flatRows.filter((row: any) =>
+            cfg.filters.every(f => evaluateFilter(row, f))
+          );
+          console.log(`[TableLoop]   After flat filter: ${flatRows.length} rows`);
+        }
+
+        if (!cfg.alreadySorted && cfg.sortCriteria && cfg.sortCriteria.length > 0) {
+          flatRows = sortRows(flatRows, cfg.sortCriteria);
+        }
+
+        if (cfg.subtotalFields && cfg.subtotalFields.length > 0) {
+          const subtotals = computeSubtotals(flatRows, cfg.subtotalFields);
+          for (const [k, v] of Object.entries(subtotals)) {
+            enriched[k] = v;
+          }
+        }
+
+        return flatRows;
+      } else {
+        return processedGroups;
+      }
+    };
+
+    findAndUpdateEntitySetArray(enriched, cfg.entitySetKey, updateTargetArray);
+
+    const finalRows = updateTargetArray(outerRows);
+    enriched[cfg.entitySetKey] = finalRows;
+
+    console.log(`[TableLoop] Entity set "${cfg.entitySetKey}" processed successfully`);
+  }
+
+  return enriched;
+}
+
+/**
+ * Parses all data-table-config attributes from the HTML template and returns
+ * the list of TableLoopConfig objects.
+ */
+function extractTableConfigs(htmlCode: string): TableLoopConfig[] {
+  const configs: TableLoopConfig[] = [];
+  const regex = /data-table-config="([^"]*)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(htmlCode)) !== null) {
+    try {
+      const decoded = match[1].replace(/&quot;/g, '"').replace(/&#34;/g, '"');
+      const cfg: TableLoopConfig = JSON.parse(decoded);
+      if (cfg && cfg.entitySetKey) {
+        configs.push(cfg);
+        console.log(`[TableLoop] Found table config: entitySet="${cfg.entitySetKey}" innerSet="${cfg.innerEntitySetKey}"`);
+      }
+    } catch (e) {
+      console.warn(`[TableLoop] Failed to parse data-table-config: ${(e as any).message}`);
+    }
+  }
+  return configs;
+}
+
+
 
 function renderZpl(
   template: LabelMaster,
@@ -276,7 +611,7 @@ function renderHtml(
   template: LabelMaster,
   docData: Record<string, unknown>,
 ): string {
-  const raw = template.html_code ?? "";
+  let raw = template.html_code ?? "";
 
   if (!raw) {
     throw new Error(
@@ -286,46 +621,92 @@ function renderHtml(
 
   console.log(`[API3] HTML render — field_mapping:`, template.field_mapping);
 
+  let resolvedValues: Record<string, string> = {};
   if (template.field_mapping && Object.keys(template.field_mapping).length > 0) {
-    // Two-pass: resolve all transformations first, then substitute
-    const { resolvedValues } = resolveAllTransformations(
+    const res = resolveAllTransformations(
       template.field_mapping,
       docData,
     );
+    resolvedValues = res.resolvedValues;
+  }
 
-    // HTML templates use {{Placeholder}} syntax
+  // ── Table Loop Engine: pre-process entity-set arrays before Handlebars ─────
+  // Extract table_config objects embedded in <table data-table-config="..."> attributes
+  // and apply filter/sort/subtotal pipelines to the docData arrays.
+  let tableConfigs = extractTableConfigs(raw);
+  if (tableConfigs.length === 0 && template.table_config) {
+    tableConfigs = Array.isArray(template.table_config)
+      ? template.table_config
+      : [template.table_config];
+    console.log(`[API3] Using table configs from database fallback:`, tableConfigs);
+  }
+  let enrichedDocData = docData as Record<string, any>;
+  if (tableConfigs.length > 0) {
+    raw = injectHandlebarsTableLoops(raw, tableConfigs);
+    console.log(`[API3] Injected Handlebars table loops into HTML code`);
+    console.log(`[API3] Applying table loop configs (${tableConfigs.length} tables)`);
+    enrichedDocData = applyTableLoopConfigs(enrichedDocData, tableConfigs);
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
+  // Build a rich, unified context for Handlebars
+  const context: Record<string, any> = { ...enrichedDocData };
+
+  // 1. Inject resolved values from transformations
+  for (const [key, value] of Object.entries(resolvedValues)) {
+    context[key] = value;
+    context[normalizeKey(key)] = value;
+  }
+
+  // 2. Inject normalized keys of raw docData (fallback helper)
+  for (const [key, value] of Object.entries(enrichedDocData)) {
+    context[normalizeKey(key)] = value;
+  }
+
+
+  try {
+    const templateFn = Handlebars.compile(raw);
+    const rendered = templateFn(context);
+    console.log(`[API3] HTML rendered successfully using Handlebars`);
+    return rendered;
+  } catch (compileErr) {
+    console.warn(`[API3] Handlebars rendering failed, falling back to regex-based replacement:`, (compileErr as any).message);
+
+    if (template.field_mapping && Object.keys(template.field_mapping).length > 0) {
+      // HTML templates use {{Placeholder}} syntax
+      return raw.replace(/{{(.*?)}}/g, (_, placeholder) => {
+        const norm = normalizeKey(placeholder);
+
+        // Check resolvedValues first (with normalized key), then fall back to
+        // normalized docData lookup
+        const resolved = Object.entries(resolvedValues).find(
+          ([k]) => normalizeKey(k) === norm,
+        );
+
+        const value = resolved ? resolved[1] : "";
+        console.log(`[API3]   HTML replace {{${placeholder}}} → "${value}"`);
+        return value;
+      });
+    }
+
+    // No field_mapping — normalize docData keys and substitute directly
+    console.log(`[API3] HTML — no field_mapping, using normalized key substitution`);
+    const normalizedDoc: Record<string, any> = {};
+
+    for (const [key, value] of Object.entries(docData)) {
+      const aliases = getKeyAliases(key);
+      for (const alias of aliases) {
+        normalizedDoc[normalizeKey(alias)] = value;
+      }
+    }
+
     return raw.replace(/{{(.*?)}}/g, (_, placeholder) => {
       const norm = normalizeKey(placeholder);
-
-      // Check resolvedValues first (with normalized key), then fall back to
-      // normalized docData lookup
-      const resolved = Object.entries(resolvedValues).find(
-        ([k]) => normalizeKey(k) === norm,
-      );
-
-      const value = resolved ? resolved[1] : "";
-      console.log(`[API3]   HTML replace {{${placeholder}}} → "${value}"`);
-      return value;
+      const value = normalizedDoc[norm];
+      console.log(`[API3]   HTML replace {{${placeholder}}} → ${value}`);
+      return value ?? "";
     });
   }
-
-  // No field_mapping — normalize docData keys and substitute directly
-  console.log(`[API3] HTML — no field_mapping, using normalized key substitution`);
-  const normalizedDoc: Record<string, any> = {};
-
-  for (const [key, value] of Object.entries(docData)) {
-    const aliases = getKeyAliases(key);
-    for (const alias of aliases) {
-      normalizedDoc[normalizeKey(alias)] = value;
-    }
-  }
-
-  return raw.replace(/{{(.*?)}}/g, (_, placeholder) => {
-    const norm = normalizeKey(placeholder);
-    const value = normalizedDoc[norm];
-    console.log(`[API3]   HTML replace {{${placeholder}}} → ${value}`);
-    return value ?? "";
-  });
 }
 
 function renderXdp(
@@ -708,7 +1089,7 @@ export async function processOutputAgent(outputId: string): Promise<void> {
 
     const templateResult = await pool.query(
       `SELECT uuid, label_id, label_name, context,
-              output_mode, html_code, zpl_code, field_mapping
+              output_mode, html_code, zpl_code, field_mapping, table_config
        FROM label_master
        WHERE label_name = $1
        ORDER BY version DESC
@@ -792,7 +1173,7 @@ export async function newprocessOutputAgent(outputId: string, simulate: boolean,
     // ── 2. Fetch template from label_master ───────────────────────────────────
     const templateResult = await pool.query(
       `SELECT uuid, label_id, label_name, context,
-              output_mode, html_code, zpl_code, xdp_code, field_mapping
+              output_mode, html_code, zpl_code, xdp_code, field_mapping, table_config
        FROM label_master
        WHERE label_id = $1
        ORDER BY version DESC

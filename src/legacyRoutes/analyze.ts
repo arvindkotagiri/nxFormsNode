@@ -6,7 +6,12 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { pdfToPng } from 'pdf-to-png-converter';
-import { callLLM } from '../utils/llmUtils';
+import { resolve } from 'path';
+
+// pdfjs-dist (used by pdf-to-png-converter) requires cMapsDir to end with a trailing slash
+// and must use forward slashes (URL format) — critical on Windows.
+const CMAP_DIR = resolve(require.resolve('pdfjs-dist/package.json'), '..', 'cmaps').replace(/\\/g, '/') + '/';
+import { callLangChainAgent } from '../utils/langchainCompat';
 
 const router = express.Router();
 const upload = multer({
@@ -33,6 +38,7 @@ CRITICAL INSTRUCTIONS FOR TABLES:
 - Inside this object, add "table_data": a list of rows.
 - Each row MUST be a LIST of cell objects (consistent column order).
 - Each cell: {"value": "the_text", "category": "static" or "dynamic"}
+- LIMIT: Only transcribe the first 2 rows of the table to show the structure. Do NOT transcribe more than 2 rows, as it is unnecessary and causes token truncation.
 `;
 
 async function getAnnotatedBase64(cleanImgBuffer, extractedData) {
@@ -147,7 +153,7 @@ router.post('/analyze-label', upload.single('image'), async (req, res) => {
       console.log("[INFO] Processing PDF file...");
       
       // Render PDF pages as PNG images
-      const pngPages = await pdfToPng(fileBytes, { viewportScale: 2.0 });
+      const pngPages = await pdfToPng(fileBytes, { viewportScale: 2.0, cMapsDir: CMAP_DIR });
       const numPages = pngPages.length;
       console.log(`[INFO] PDF has ${numPages} pages.`);
 
@@ -158,9 +164,10 @@ router.post('/analyze-label', upload.single('image'), async (req, res) => {
         // Ensure image buffer is standard RGB PNG format for LLM consistency
         const cleanPngBuffer = await sharp(pageImgBuffer).toFormat('png').toBuffer();
 
-        // Call LLM for this page
-        const rawResponse = await callLLM(
+        // Call LLM for this page using LangChain agent wrapper
+        const rawResponse = await callLangChainAgent(
           'analyze',
+          'Analyze Page Agent',
           PROMPT_ANALYSIS,
           null,
           cleanPngBuffer,
@@ -212,8 +219,10 @@ router.post('/analyze-label', upload.single('image'), async (req, res) => {
       
       const cleanPngBuffer = await sharp(fileBytes).png().toBuffer();
       
-      const rawResponse = await callLLM(
+      // Call LLM using LangChain agent wrapper
+      const rawResponse = await callLangChainAgent(
         'analyze',
+        'Analyze Image Agent',
         PROMPT_ANALYSIS,
         null,
         cleanPngBuffer,

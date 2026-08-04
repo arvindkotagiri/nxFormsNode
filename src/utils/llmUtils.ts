@@ -118,38 +118,130 @@ export async function callLLM(processName, prompt, systemInstruction = null, ima
       clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     }
     
-    // 2. If it still doesn't parse directly, try to locate the first '{' or '[' and last '}' or ']'
+    // 2. Try parsing directly, if it fails try repairing first
     try {
       JSON.parse(clean);
     } catch (e) {
-      console.warn(`[callLLM] JSON.parse failed on clean response, attempting substring extraction... Error: ${e.message}`);
-      console.warn(`[callLLM] Clean response length: ${clean.length} characters.`);
-      console.warn(`[callLLM] End of clean response: ${clean.substring(Math.max(0, clean.length - 200))}`);
-      const firstCurly = clean.indexOf('{');
-      const firstSquare = clean.indexOf('[');
-      let startIndex = -1;
-      let endIndex = -1;
-      
-      if (firstCurly !== -1 && (firstSquare === -1 || firstCurly < firstSquare)) {
-        startIndex = firstCurly;
-        endIndex = clean.lastIndexOf('}');
-      } else if (firstSquare !== -1) {
-        startIndex = firstSquare;
-        endIndex = clean.lastIndexOf(']');
-      }
-      
-      if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-        const potentialJson = clean.substring(startIndex, endIndex + 1);
-        try {
-          JSON.parse(potentialJson);
-          clean = potentialJson;
-          console.log("[callLLM] Successfully extracted valid JSON from raw response.");
-        } catch (innerError) {
-          console.error("[callLLM] Substring extraction also failed to parse as JSON:", innerError.message);
+      try {
+        const repaired = repairJson(clean);
+        JSON.parse(repaired);
+        clean = repaired;
+        console.log("[callLLM] Successfully repaired JSON response directly.");
+      } catch (repairErr) {
+        console.warn(`[callLLM] JSON.parse/repair failed on clean response, attempting substring extraction... Error: ${e.message}`);
+        console.warn(`[callLLM] Clean response length: ${clean.length} characters.`);
+        console.warn(`[callLLM] End of clean response: ${clean.substring(Math.max(0, clean.length - 200))}`);
+        
+        const firstCurly = clean.indexOf('{');
+        const firstSquare = clean.indexOf('[');
+        let startIndex = -1;
+        let endIndex = -1;
+        
+        if (firstCurly !== -1 && (firstSquare === -1 || firstCurly < firstSquare)) {
+          startIndex = firstCurly;
+          endIndex = clean.lastIndexOf('}');
+        } else if (firstSquare !== -1) {
+          startIndex = firstSquare;
+          endIndex = clean.lastIndexOf(']');
+        }
+        
+        if (startIndex !== -1) {
+          if (endIndex === -1 || endIndex <= startIndex) {
+            endIndex = clean.length - 1;
+          }
+          const potentialJson = clean.substring(startIndex, endIndex + 1);
+          try {
+            JSON.parse(potentialJson);
+            clean = potentialJson;
+            console.log("[callLLM] Successfully extracted valid JSON from substring.");
+          } catch (innerError) {
+            try {
+              const repairedPotential = repairJson(potentialJson);
+              JSON.parse(repairedPotential);
+              clean = repairedPotential;
+              console.log("[callLLM] Successfully extracted and repaired JSON from substring.");
+            } catch (innerRepairError) {
+              console.error("[callLLM] Substring extraction and repair also failed to parse as JSON:", innerRepairError.message);
+            }
+          }
         }
       }
     }
     return clean;
+  }
+
+  return result;
+}
+
+function repairJson(jsonStr) {
+  let str = jsonStr.trim();
+  
+  // Remove any trailing commas before brackets/braces
+  str = str.replace(/,\s*([\]}])/g, '$1');
+
+  let result = "";
+  const stack = [];
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (char === '\\') {
+        escape = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      result += char;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      result += char;
+      continue;
+    }
+
+    if (char === '{' || char === '[') {
+      stack.push(char);
+      result += char;
+    } else if (char === '}') {
+      if (stack[stack.length - 1] === '{') {
+        stack.pop();
+        result += char;
+      } else {
+        // Unmatched closing brace - skip it
+        console.log(`[repairJson] Skipping unmatched closing brace '}' at position ${i}`);
+      }
+    } else if (char === ']') {
+      if (stack[stack.length - 1] === '[') {
+        stack.pop();
+        result += char;
+      } else {
+        // Unmatched closing bracket - skip it
+        console.log(`[repairJson] Skipping unmatched closing bracket ']' at position ${i}`);
+      }
+    } else {
+      result += char;
+    }
+  }
+
+  // If the JSON was truncated inside a string value, close the string quote first
+  if (inString) {
+    result += '"';
+  }
+
+  // Close open brackets/braces in reverse order
+  while (stack.length > 0) {
+    const openChar = stack.pop();
+    if (openChar === '{') {
+      result += '}';
+    } else if (openChar === '[') {
+      result += ']';
+    }
   }
 
   return result;
@@ -177,6 +269,7 @@ async function callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes
 
   const generationConfig = {
     temperature: 0.0,
+    maxOutputTokens: 8192,
   };
   if (responseMimeType === 'application/json') {
     generationConfig.responseMimeType = 'application/json';

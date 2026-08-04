@@ -3,7 +3,13 @@ import express from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
 import { pdfToPng } from 'pdf-to-png-converter';
-import { callLLM } from '../utils/llmUtils';
+import { resolve } from 'path';
+
+// pdfjs-dist (used by pdf-to-png-converter) requires cMapsDir to end with a trailing slash
+// and must use forward slashes (URL format) — critical on Windows.
+const CMAP_DIR = resolve(require.resolve('pdfjs-dist/package.json'), '..', 'cmaps').replace(/\\/g, '/') + '/';
+import { callLangChainAgent } from '../utils/langchainCompat';
+import Handlebars from 'handlebars';
 
 const router = express.Router();
 const upload = multer({
@@ -15,44 +21,71 @@ Role: Expert Screenshot-to-Code Engineer.
 Task: Generate a PIXEL-PERFECT, PRINT-FLEXIBLE HTML replica of the attached image.
 
 STRICT LAYOUT & PRINTING REQUIREMENTS:
-1. DIMENSIONS: Use a fixed container of 816px (width) by 1056px (height) per page. This is exactly 8.5in x 11in (US Letter) at 96DPI.
-2. POSITIONING:
-   - Header, static text blocks, and metadata sections MUST be positioned using \`position: absolute\` with precise \`px\` values for \`top\`, \`left\`, \`width\`, and \`height\`.
-   - The main line-item table MUST be a standard HTML \`<table>\` element. The table rows and cells MUST NOT be absolutely positioned. 
-3. TABLE FLOW & PAGINATION RULES:
-   - The table MUST support dynamic row additions at runtime.
-   - You MUST apply the following print-flexibility CSS classes or styles to the table:
-     - \`table { width: 100%; page-break-inside: auto; }\`
-     - \`tr { page-break-inside: avoid; page-break-after: auto; }\`
-     - \`thead { display: table-header-group; }\` (so headers repeat on new pages if the table spans multiple pages)
-     - \`tfoot { display: table-footer-group; }\`
-   - If the table overflows onto multiple pages, it should stop 15px above the page footer and break to the next page.
-4. FOOTER POSITIONING:
-   - The document footer MUST be placed inside a container with class \`footer\` at the bottom of the page.
-   - For print styles, use CSS to ensure the footer stays at the bottom:
-     \`@media print { .footer { position: fixed; bottom: 0; left: 0; width: 100%; page-break-before: avoid; } }\`
-5. ASSETS & PLACEMARKS (CRITICAL FOR MULTI-LLM CONSISTENCY):
-   - You MUST represent logo, signatures, barcodes, and QR codes using standard \`<img>\` tags with specific \`data-chunk-type\` attributes:
+1. FIXED WRAPPER: Use a container of width 816px (US Letter width at 96DPI) with relative positioning.
+2. REPEATING HEADER & FOOTER:
+   - To repeat the document header and footer on every page when printed, wrap them in fixed containers:
+     - Header container: <div class="header" style="position: fixed; top: 0; left: 0; width: 816px; height: 180px;">...</div>
+     - Footer container: <div class="footer" style="position: fixed; bottom: 0; left: 0; width: 816px; height: 100px;">...</div>
+   - Inside the header and footer containers, you MUST position all child elements (logo, client address, billing metadata, terms, signatures) using \`position: absolute\` with precise \`px\` values for \`top\`, \`left\`, \`width\`, and \`height\` matching the exact layout of the input image. This keeps the design PIXEL-PERFECT.
+3. DYNAMIC MAIN TABLE:
+   - The main line-item table MUST be a standard HTML \`<table>\` element in the normal flow (not absolutely positioned).
+   - Apply top and bottom margins to prevent the table content from overlapping the fixed header and footer:
+     \`table { width: 100%; margin-top: 190px; margin-bottom: 110px; border-collapse: collapse; page-break-inside: auto; }\`
+     \`tr { page-break-inside: avoid; page-break-after: auto; }\`
+     \`thead { display: table-header-group; }\`
+   - Inside the table, use standard \`<thead>\` for the column headers (e.g. black bar with Column names), \`<tbody>\` for rows, and \`<tfoot>\` if there is a table-specific total.
+4. DYNAMIC NESTED LOOPING (HANDLEBARS SYNTAX):
+   - You MUST wrap repeating dynamic list sections inside the table body \`<tbody>\` in Handlebars block helpers:
+     {{#each groups}}
+       <!-- Group Title Row -->
+       <tr class="group-header"><td colspan="100%"><strong>{{this.name}}</strong></td></tr>
+       
+       <!-- Inner Items Loop -->
+       {{#each this.items}}
+         <tr class="item-row">
+           <td>{{this.description}}</td>
+           <td>{{this.serviceFee}}</td>
+           <td>{{this.disbursement}}</td>
+           <td>{{this.total}}</td>
+         </tr>
+       {{/each}}
+       
+       <!-- Subtotal Row -->
+       <tr class="subtotal-row">
+         <td class="subtotal-label">Target Sub Total:</td>
+         <td>{{this.subtotalServiceFee}}</td>
+         <td>{{this.subtotalDisbursement}}</td>
+         <td>{{this.subtotalTotal}}</td>
+       </tr>
+     {{/each}}
+   - For simple non-nested tables, use a flat loop: {{#each items}}...{{/each}}.
+   - Outside of loops, replace general dynamic header/footer labels with single placeholders: {{invoiceNumber}}, {{invoiceDate}}, {{customerName}}, etc.
+5. PAGE NUMBERS:
+   - Render dynamic page numbers using CSS print counters:
+     \`@media print { .page-number::after { content: counter(page); } }\`
+     And place \`Page: <span class="page-number"></span>\` inside the header/footer block.
+6. ASSETS & PLACEMARKS (CRITICAL FOR MULTI-LLM CONSISTENCY):
+   - Represent logo, signatures, barcodes, and QR codes using standard <img> tags with specific data-chunk-type attributes:
      - Logo: <img data-chunk-type="logo" src="LOGO_PLACEHOLDER" alt="Logo" style="position: absolute; ...">
      - Signature: <img data-chunk-type="signature" src="SIGNATURE_PLACEHOLDER" alt="Signature" style="position: absolute; ...">
      - Barcode (Code128): <img data-chunk-type="barcode" data-barcode-type="code128" src="BARCODE_PLACEHOLDER" alt="Barcode" style="position: absolute; ...">
      - QR Code: <img data-chunk-type="barcode" data-barcode-type="qr" src="QRCODE_PLACEHOLDER" alt="QR Code" style="position: absolute; ...">
-   - Do NOT represent barcodes or QR codes as nested divs, tables, or SVG paths. Use the \`<img>\` placeholder tags exactly as defined above.
 
-TEMPLATE FIELDS:
-Replace all dynamic text with {{fieldName}} while keeping the exact position and style of the original text.
-
-Return ONLY a JSON object: {"full_invoice_html": "<div style='position: relative; width: 816px; height: 1056px; background: white;'>...</div>"}
+Return ONLY a JSON object: {"full_invoice_html": "<html>...</html>"}
 `;
 
 function stripHtmlWrappers(html) {
+  // Extract all style blocks to preserve document layout rules
+  const styleMatches = html.match(/<style[^>]*>.*?<\/style>/gis) || [];
+  const stylesText = styleMatches.join("\n");
+
   const match = html.match(/<div.*?>.*<\/div>/is);
   if (match) {
-    return match[0];
+    return stylesText + "\n" + match[0];
   }
   let cleaned = html.replace(/<(?:html|body|!doctype|head)[^>]*>/gi, '');
   cleaned = cleaned.replace(/<\/(?:html|body|head)>/gi, '');
-  return cleaned.trim();
+  return stylesText + "\n" + cleaned.trim();
 }
 
 function buildPlaceholderPromptBlock(fieldMappings) {
@@ -282,7 +315,7 @@ async function cropImageParts(pageImageBuffer) {
   Return a JSON list of objects: {"field_name": "logo"|"signature"|"barcode"|"barcode_1"|"barcode_2"|"qrcode"|"qrcode_1"|"qrcode_2", "box_2d": [ymin, xmin, ymax, xmax]}
   `;
   try {
-    const res = await callLLM('invoice', promptFindCrops, null, pageImageBuffer, "application/json");
+    const res = await callLangChainAgent('invoice', 'Crop Assets Agent', promptFindCrops, null, pageImageBuffer, "application/json");
     let items = JSON.parse(res);
     if (items && typeof items === 'object') {
       if (Array.isArray(items.fields)) items = items.fields;
@@ -367,7 +400,7 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
 
     if (isPdf) {
       console.log("[INFO] Converting PDF to images page by page...");
-      const pngPages = await pdfToPng(fileBytes, { viewportScale: 3.0 });
+      const pngPages = await pdfToPng(fileBytes, { viewportScale: 3.0, cMapsDir: CMAP_DIR });
       const numPages = pngPages.length;
       console.log(`[INFO] PDF has ${numPages} pages.`);
 
@@ -380,8 +413,9 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
 
         // Generate HTML for this page
         console.log(`[INFO] Sending page ${pageIdx + 1} request to LLM...`);
-        const rawResponse = await callLLM(
+        const rawResponse = await callLangChainAgent(
           'invoice',
+          `Replication Page ${pageIdx + 1} Agent`,
           PROMPT_PRECISION,
           null,
           cleanJpeg,
@@ -433,7 +467,7 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
       const firstPageBytes = pageHtmls[0].jpegBytes;
       try {
         const analysisPrompt = "Return JSON list of {'field_name': '...', 'value': '...'}";
-        const analysisRes = await callLLM('invoice', analysisPrompt, null, firstPageBytes, "application/json");
+        const analysisRes = await callLangChainAgent('invoice', 'Replication PDF Analysis Agent', analysisPrompt, null, firstPageBytes, "application/json");
         let fieldData = JSON.parse(analysisRes);
         if (fieldData && typeof fieldData === 'object') {
           if (Array.isArray(fieldData.fields)) fieldData = fieldData.fields;
@@ -455,10 +489,20 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
       console.log("[BACKEND] --- REPLICA GENERATION COMPLETE (PDF) ---");
       console.log("=" * 50 + "\n");
 
+      const viewportFixStyle = `
+<style>
+  @media screen {
+    .pdf-page-wrapper, [data-editor-container] {
+      transform: translate(0, 0) !important;
+    }
+  }
+</style>
+`;
+
       return res.status(200).json({
         status: "success",
-        full_html: htmlResult,
-        preview_html: previewHtml
+        full_html: htmlResult + viewportFixStyle,
+        preview_html: previewHtml + viewportFixStyle
       });
     } else {
       // Single image processing
@@ -491,8 +535,9 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
       }
 
       console.log("[INFO] Sending request to LLM (Pixel-Perfect Replica)...");
-      const rawResponse = await callLLM(
+      const rawResponse = await callLangChainAgent(
         'invoice',
+        'Replication Image Agent',
         promptWithMappings,
         null,
         imgBytes,
@@ -537,8 +582,9 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
           "field_name should be the visible text label (e.g. 'Invoice Number', 'Ship To'). " +
           "Example: [{'field_name': 'Invoice Number', 'value': 'INV-2024-001'}, ...]"
         );
-        const analysisRes = await callLLM(
+        const analysisRes = await callLangChainAgent(
           'invoice',
+          'Replication Image Value Extraction Agent',
           analysisPrompt,
           null,
           imgBytes,
@@ -549,6 +595,50 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
           if (Array.isArray(fieldData.fields)) fieldData = fieldData.fields;
         }
 
+        // Initialize preview context with mock looping and flat data
+        const previewContext = {
+          invoiceNumber: "04365695",
+          invoice_number: "04365695",
+          invoiceDate: "Jul 22, 2026",
+          invoice_date: "Jul 22, 2026",
+          dueDate: "Aug 21, 2026",
+          due_date: "Aug 21, 2026",
+          customerNumber: "507266",
+          customer_number: "507266",
+          referenceNumber: "00534-00248",
+          reference_number: "00534-00248",
+          customerName: "JENNIFER DOMINIK",
+          customer_name: "JENNIFER DOMINIK",
+          groups: [
+            {
+              name: "B.P.M.P. Family Partners, LLC",
+              items: [
+                { description: "State Lien Search (All available liens) - CA, Secretary of State", serviceFee: "$49.80", disbursement: "$0.00", total: "$49.80" },
+                { description: "Federal Tax Lien, State Tax Lien & Judgment Lien Search - CA, Marin County", serviceFee: "$168.00", disbursement: "$0.00", total: "$168.00" },
+                { description: "Litigation Search- Searched as Defendant - CA, Marin County Superior Court", serviceFee: "$72.00", disbursement: "$0.00", total: "$72.00" }
+              ],
+              subtotalServiceFee: "$289.80",
+              subtotalDisbursement: "$0.00",
+              subtotalTotal: "$289.80"
+            },
+            {
+              name: "Bill and Mary Poland 1988 Family Trust",
+              items: [
+                { description: "Federal Litigation Search- Searched as Defendant - CA, U.S. District Court", serviceFee: "$65.40", disbursement: "$0.00", total: "$65.40" },
+                { description: "Bankruptcy Search - Searched as Petitioner - CA, U.S. Bankruptcy Court", serviceFee: "$65.40", disbursement: "$0.00", total: "$65.40" }
+              ],
+              subtotalServiceFee: "$130.80",
+              subtotalDisbursement: "$0.00",
+              subtotalTotal: "$130.80"
+            }
+          ],
+          items: [
+            { description: "State Lien Search (All available liens) - CA, Secretary of State", serviceFee: "$49.80", disbursement: "$0.00", total: "$49.80" },
+            { description: "Federal Tax Lien, State Tax Lien & Judgment Lien Search - CA, Marin County", serviceFee: "$168.00", disbursement: "$0.00", total: "$168.00" },
+            { description: "Litigation Search- Searched as Defendant - CA, Marin County Superior Court", serviceFee: "$72.00", disbursement: "$0.00", total: "$72.00" }
+          ]
+        };
+
         if (Array.isArray(fieldData)) {
           for (const item of fieldData) {
             if (!item || typeof item !== 'object') continue;
@@ -558,25 +648,38 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
 
             const sapPath = fieldMappings[llmLabel] || llmLabel;
             const mappedField = sapPath.includes('.') ? sapPath.split('.').pop() : sapPath;
-            const placeholder = `{{${mappedField}}}`;
             
-            previewHtml = previewHtml.split(placeholder).join(String(sampleValue));
-            console.log(`  [Preview] ${placeholder}  →  '${sampleValue}'`);
+            previewContext[mappedField] = sampleValue;
+            console.log(`  [Preview Context] ${mappedField}  →  '${sampleValue}'`);
           }
         }
-        console.log("[SUCCESS] Preview substitution complete");
+
+        // Render template using Handlebars
+        const templateFn = Handlebars.compile(htmlContent);
+        previewHtml = templateFn(previewContext);
+        console.log("[SUCCESS] Handlebars preview compilation complete");
       } catch (mapErr) {
-        console.warn("[WARNING] Preview substitution failed:", mapErr.message);
+        console.warn("[WARNING] Handlebars preview compilation failed:", mapErr.message);
       }
 
       console.log("="*50);
       console.log("[BACKEND] --- REPLICA GENERATION COMPLETE ---");
       console.log("="*50 + "\n");
 
+      const viewportFixStyle = `
+<style>
+  @media screen {
+    .pdf-page-wrapper, [data-editor-container] {
+      transform: translate(0, 0) !important;
+    }
+  }
+</style>
+`;
+
       return res.status(200).json({
         status: "success",
-        full_html: htmlResult,
-        preview_html: previewHtml
+        full_html: htmlResult + viewportFixStyle,
+        preview_html: previewHtml + viewportFixStyle
       });
     }
   } catch (err) {

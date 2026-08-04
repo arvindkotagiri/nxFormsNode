@@ -1,3 +1,5 @@
+import "./utils/backendLogger";
+
 // Polyfill process.getBuiltinModule for Node 18 compatibility with pdfjs-dist
 if (typeof process !== "undefined" && !(process as any).getBuiltinModule) {
   (process as any).getBuiltinModule = function (name: string) {
@@ -43,6 +45,8 @@ import printerRoutes from "./legacyRoutes/printerRoutes";
 import legacyImageRetentionRoutes, { initImageDb } from "./legacyRoutes/imageRetentionRoutes";
 import { ensureAuditColumns } from "./db/ensureAuditColumns";
 import { initApiCatalogDb } from "./db/initApiCatalogDb";
+import observabilityRoutes from "./routes/observability";
+import ticketsRoutes from "./routes/tickets";
 import https from 'https';
 import fs from 'fs';
 import path from "path";
@@ -90,18 +94,27 @@ app.use("/api/simulation", simulationRoutes);
 app.use("/image-retention", imageRetentionRoutes);
 app.use("/api/image-retention", imageRetentionRoutes);
 app.use("/", dbRoutes);
+app.use("/api", dbRoutes);
 app.use("/", labelRoutes);
+app.use("/api", labelRoutes);
 app.use("/", settingsRoutes);
+app.use("/api", settingsRoutes);
 app.use("/", analyzeRoutes);
+app.use("/api", analyzeRoutes);
 app.use("/", generateZplRoutes);
+app.use("/api", generateZplRoutes);
 app.use("/", generateXdpRoutes);
+app.use("/api", generateXdpRoutes);
 app.use("/", replicateInvoiceRoutes);
+app.use("/api", replicateInvoiceRoutes);
 app.use("/api", apiMasterRoutes);
 app.use("/api", printerRoutes);
 app.use("/api", legacyImageRetentionRoutes);
+app.use("/api/observability", observabilityRoutes);
+app.use("/api/support", ticketsRoutes);
 
 // Health check (matches your FastAPI /health)
-app.get("/health", async (_req, res) => {
+app.get(["/health", "/api/health"], async (_req, res) => {
   try {
     const r = await pool.query("SELECT now() as now");
     res.json({ status: "healthy", timestamp: r.rows[0].now });

@@ -173,7 +173,7 @@ router.post("/trigger", async (req, res) => {
   }}
 );
 
-router.get("/:eventId/output", requireUser, async (req, res) => {
+router.get("/:eventId/output", async (req, res) => {
   const { eventId } = req.params;
 
   try {

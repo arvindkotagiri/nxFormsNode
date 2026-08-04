@@ -4,7 +4,12 @@ import multer from 'multer';
 import sharp from 'sharp';
 import axios from 'axios';
 import { pdfToPng } from 'pdf-to-png-converter';
-import { callLLM } from '../utils/llmUtils';
+import { resolve } from 'path';
+
+// pdfjs-dist (used by pdf-to-png-converter) requires cMapsDir to end with a trailing slash
+// and must use forward slashes (URL format) — critical on Windows.
+const CMAP_DIR = resolve(require.resolve('pdfjs-dist/package.json'), '..', 'cmaps').replace(/\\/g, '/') + '/';
+import { callLangChainAgent } from '../utils/langchainCompat';
 
 const router = express.Router();
 const upload = multer({
@@ -94,7 +99,7 @@ async function getZplGraphic(imageBuffer) {
 async function cropParts(pageImageBuffer, widthIn, dpi, htmlDesign) {
   const promptFind = "Return JSON list of objects: {'field_name': 'logo'|'signature', 'box_2d': [ymin, xmin, ymax, xmax]}. For logos and signatures, ensure the box_2d coordinates encompass the ENTIRE graphic without any edge truncation.";
   try {
-    const res = await callLLM('zpl', promptFind, null, pageImageBuffer, "application/json");
+    const res = await callLangChainAgent('zpl', 'ZPL Assets Finding Agent', promptFind, null, pageImageBuffer, "application/json");
     let items = JSON.parse(res);
     if (items && typeof items === 'object') {
       if (Array.isArray(items.fields)) items = items.fields;
@@ -187,7 +192,7 @@ router.post('/generate-zpl', upload.single('image'), async (req, res) => {
 
     if (filename.endsWith('.pdf')) {
       console.log("[INFO] Converting PDF to images page by page for ZPL...");
-      const pngPages = await pdfToPng(fileBytes, { viewportScale: 3.0 });
+      const pngPages = await pdfToPng(fileBytes, { viewportScale: 3.0, cMapsDir: CMAP_DIR });
       for (const p of pngPages) {
         const cleanPng = await sharp(p.content).png().toBuffer();
         pageImages.push(cleanPng);
@@ -260,7 +265,7 @@ router.post('/generate-zpl', upload.single('image'), async (req, res) => {
       console.log(`[INFO] Generating ZPL for page ${pageIdx + 1}/${pageImages.length}...`);
       const pImg = pageImages[pageIdx];
 
-      const rawZpl = await callLLM('zpl', zplPrompt, null, pImg, "text/plain");
+      const rawZpl = await callLangChainAgent('zpl', `ZPL Page ${pageIdx + 1} Generation Agent`, zplPrompt, null, pImg, "text/plain");
       let zplCode = cleanZpl(rawZpl);
 
       if (!zplCode) {
@@ -289,7 +294,7 @@ router.post('/generate-zpl', upload.single('image'), async (req, res) => {
       let previewZpl = zplCode;
       try {
         const analysisPrompt = "Return JSON list of {'field_name': '...', 'value': '...'}";
-        const analysisRes = await callLLM('zpl', analysisPrompt, null, pImg, "application/json");
+        const analysisRes = await callLangChainAgent('zpl', `ZPL Page ${pageIdx + 1} Analysis Agent`, analysisPrompt, null, pImg, "application/json");
         let fieldData = JSON.parse(analysisRes);
         if (fieldData && typeof fieldData === 'object') {
           if (Array.isArray(fieldData.fields)) fieldData = fieldData.fields;
