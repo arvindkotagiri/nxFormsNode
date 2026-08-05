@@ -617,6 +617,139 @@ export async function initApiCatalogDb(): Promise<void> {
       `, [JSON.stringify(nestedPayloadObj)]);
     }
 
+    // Seed SAP Sales Order OData Context & Simulation
+    const soEntities = JSON.stringify([
+      { name: "SalesOrderHeader", label: "SalesOrderHeader", isCore: true, enabled: true },
+      { name: "SalesOrderItems", label: "SalesOrderItems", isCore: true, enabled: true }
+    ]);
+    const soFields = JSON.stringify({
+      SalesOrderHeader: [
+        { name: "SalesOrder", path: "d.SalesOrder" },
+        { name: "SalesOrderType", path: "d.SalesOrderType" },
+        { name: "SalesOrganization", path: "d.SalesOrganization" },
+        { name: "DistributionChannel", path: "d.DistributionChannel" },
+        { name: "SoldToParty", path: "d.SoldToParty" },
+        { name: "SalesOrderDate", path: "d.SalesOrderDate" },
+        { name: "PurchaseOrderByCustomer", path: "d.PurchaseOrderByCustomer" },
+        { name: "TotalNetAmount", path: "d.TotalNetAmount" },
+        { name: "TransactionCurrency", path: "d.TransactionCurrency" },
+        { name: "RequestedDeliveryDate", path: "d.RequestedDeliveryDate" },
+        { name: "IncotermsClassification", path: "d.IncotermsClassification" },
+        { name: "IncotermsLocation1", path: "d.IncotermsLocation1" },
+        { name: "CustomerPaymentTerms", path: "d.CustomerPaymentTerms" },
+        { name: "ShippingCondition", path: "d.ShippingCondition" },
+        { name: "OverallDeliveryStatus", path: "d.OverallDeliveryStatus" },
+        { name: "OverallSDProcessStatus", path: "d.OverallSDProcessStatus" }
+      ],
+      SalesOrderItems: [
+        { name: "SalesOrderItem", path: "SalesOrderItem" },
+        { name: "Material", path: "Material" },
+        { name: "SalesOrderItemText", path: "SalesOrderItemText" },
+        { name: "RequestedQuantity", path: "RequestedQuantity" },
+        { name: "RequestedQuantityUnit", path: "RequestedQuantityUnit" },
+        { name: "NetAmount", path: "NetAmount" },
+        { name: "TransactionCurrency", path: "TransactionCurrency" },
+        { name: "MaterialGroup", path: "MaterialGroup" },
+        { name: "BillingDocumentDate", path: "BillingDocumentDate" },
+        { name: "ItemGrossWeight", path: "ItemGrossWeight" },
+        { name: "ItemNetWeight", path: "ItemNetWeight" },
+        { name: "ItemWeightUnit", path: "ItemWeightUnit" }
+      ]
+    });
+
+    const checkSoContext = await client.query("SELECT id FROM contexts WHERE name = 'SAP Sales Order' LIMIT 1");
+    if ((checkSoContext.rowCount ?? 0) === 0) {
+      await client.query(`
+        INSERT INTO contexts (name, endpoint, auth_type, fields, entities, status)
+        VALUES ('SAP Sales Order', 'http://localhost:4000/api/simulation/sap-sales-order', 'None', $1::jsonb, $2::jsonb, 'Active')
+      `, [soFields, soEntities]);
+    } else {
+      await client.query(`
+        UPDATE contexts
+        SET fields = $1::jsonb, entities = $2::jsonb,
+            endpoint = 'http://localhost:4000/api/simulation/sap-sales-order'
+        WHERE name = 'SAP Sales Order'
+      `, [soFields, soEntities]);
+    }
+
+    const soPayload = {
+      d: {
+        SalesOrder: "1",
+        SalesOrderType: "OR",
+        SalesOrganization: "1000",
+        DistributionChannel: "01",
+        SoldToParty: "BP-CUST",
+        SalesOrderDate: "2024-07-18",
+        PurchaseOrderByCustomer: "Test 1",
+        TotalNetAmount: "8.00",
+        TransactionCurrency: "USD",
+        RequestedDeliveryDate: "2024-07-18",
+        IncotermsClassification: "EXW",
+        IncotermsLocation1: "destination",
+        CustomerPaymentTerms: "0003",
+        ShippingCondition: "01",
+        OverallDeliveryStatus: "C",
+        OverallSDProcessStatus: "C",
+        SalesOrderItems: {
+          results: [
+            {
+              SalesOrderItem: "10",
+              Material: "SUGAR",
+              SalesOrderItemText: "Sugar Raw Material",
+              RequestedQuantity: "1",
+              RequestedQuantityUnit: "LB",
+              NetAmount: "8.00",
+              TransactionCurrency: "USD",
+              MaterialGroup: "01",
+              BillingDocumentDate: "2024-07-18",
+              ItemGrossWeight: "10",
+              ItemNetWeight: "10",
+              ItemWeightUnit: "LB"
+            }
+          ]
+        }
+      }
+    };
+
+    const checkSoSim = await client.query("SELECT id FROM simulation_master WHERE simulation_name = 'SAP Sales Order Simulation' LIMIT 1");
+    if ((checkSoSim.rowCount ?? 0) === 0) {
+      await client.query(`
+        INSERT INTO simulation_master (simulation_name, context, form, input_values)
+        VALUES ('SAP Sales Order Simulation', 'SAP Sales Order', '', $1::jsonb)
+      `, [JSON.stringify(soPayload)]);
+    } else {
+      await client.query(`
+        UPDATE simulation_master
+        SET context = 'SAP Sales Order', input_values = $1::jsonb
+        WHERE simulation_name = 'SAP Sales Order Simulation'
+      `, [JSON.stringify(soPayload)]);
+    }
+    // Seed "Sales Order - Live SAP" simulation — context must match template context name exactly
+    const soLivePayload = {
+      d: {
+        SalesOrder: "1", SalesOrderType: "OR", SalesOrganization: "1000",
+        DistributionChannel: "01", SoldToParty: "BP-CUST", SalesOrderDate: "2024-07-18",
+        PurchaseOrderByCustomer: "Test 1", TotalNetAmount: "8", TransactionCurrency: "USD",
+        RequestedDeliveryDate: "2024-07-18", IncotermsClassification: "EXW",
+        IncotermsLocation1: "destination", CustomerPaymentTerms: "0003",
+        ShippingCondition: "01", OverallDeliveryStatus: "C", OverallSDProcessStatus: "C",
+        SalesOrderItems: { results: [{ SalesOrderItem: "10", Material: "SUGAR",
+          SalesOrderItemText: "Sugar Raw Material", RequestedQuantity: "1",
+          RequestedQuantityUnit: "LB", NetAmount: "8", TransactionCurrency: "USD",
+          MaterialGroup: "01", BillingDocumentDate: "2024-07-18",
+          ItemGrossWeight: "10", ItemNetWeight: "10", ItemWeightUnit: "LB" }] }
+      }
+    };
+    const checkSoLiveSim = await client.query(
+      "SELECT id FROM simulation_master WHERE simulation_name = 'Sales Order - Live SAP' LIMIT 1"
+    );
+    if ((checkSoLiveSim.rowCount ?? 0) === 0) {
+      await client.query(`
+        INSERT INTO simulation_master (simulation_name, context, form, input_values)
+        VALUES ('Sales Order - Live SAP', 'Sales Order', '', $1::jsonb)
+      `, [JSON.stringify(soLivePayload)]);
+    }
+
     console.log("[db] API catalog + output definition tables ready");
   } finally {
     client.release();
