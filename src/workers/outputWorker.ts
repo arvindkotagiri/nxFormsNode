@@ -601,19 +601,24 @@ async function fetchPayloadDataFromAPI(context: string, entityKey: string): Prom
     const ctx = ctxRow.rows[0];
     const endpoint: string = ctx.endpoint || '';
 
-    // If the endpoint points to our own simulation API, call it directly for live data
-    // Pass entityKey as ?id= so a specific record can be fetched (e.g. specific Sales Order)
-    if (endpoint && (endpoint.includes('/api/simulation/') || endpoint.includes('localhost'))) {
+    // If this is a Sales Order context, route it to our local simulation endpoint
+    // which handles token retrieval, header enrichment, and OData fetching/mapping.
+    const isSalesOrder = context.toLowerCase() === 'sales order';
+    const targetUrl = isSalesOrder
+      ? `http://localhost:${process.env.PORT || 4000}/api/simulation/sap-sales-order`
+      : endpoint;
+
+    if (targetUrl && (isSalesOrder || targetUrl.includes('/api/simulation/') || targetUrl.includes('localhost'))) {
       try {
         const axios = (await import('axios')).default;
-        const liveUrl = entityKey ? `${endpoint}?id=${encodeURIComponent(entityKey)}` : endpoint;
+        const liveUrl = entityKey ? `${targetUrl}?id=${encodeURIComponent(entityKey)}` : targetUrl;
         const liveResp = await axios.get(liveUrl, { timeout: 15000 });
         if (liveResp.status === 200 && liveResp.data && typeof liveResp.data === 'object') {
           console.log(`[API2] Live payload fetched from ${liveUrl} for context=${context}`);
           return liveResp.data;
         }
       } catch (liveErr: any) {
-        console.warn(`[API2] Live endpoint call failed (${endpoint}): ${liveErr.message} — falling back to simulation_master`);
+        console.warn(`[API2] Live endpoint call failed (${targetUrl}): ${liveErr.message} — falling back to simulation_master`);
       }
     }
   }
