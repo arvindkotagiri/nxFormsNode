@@ -36,6 +36,15 @@ router.post('/init-labels-db', async (req, res) => {
         END $$;
       `);
 
+      await client.query(`
+        DO $$ 
+        BEGIN 
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='label_master' AND column_name='table_config') THEN
+                ALTER TABLE label_master ADD COLUMN table_config JSONB;
+            END IF;
+        END $$;
+      `);
+
       res.status(200).json({ status: "success", message: "Label table schema updated" });
     } finally {
       client.release();
@@ -48,6 +57,7 @@ router.post('/init-labels-db', async (req, res) => {
 router.post('/save-label', async (req, res) => {
   try {
     const data = req.body || {};
+    const uuid = data.uuid;
     const label_id = data.label_id;
     const label_name = data.label_name;
     const context = data.context;
@@ -63,14 +73,47 @@ router.post('/save-label', async (req, res) => {
     const created_by = data.created_by || 'System';
     const created_on = new Date();
 
+    const table_config = data.table_config ? JSON.stringify(data.table_config) : null;
+
+    if (uuid) {
+      const updateQuery = `
+        UPDATE label_master
+        SET 
+          label_name = $1,
+          context = $2,
+          field_mapping = $3,
+          bar_code_type = $4,
+          zpl_code = $5,
+          fields = $6,
+          version = version + 0.1,
+          html_code = $7,
+          page_dimensions = $8,
+          output_mode = $9,
+          xdp_code = $10,
+          table_config = $11
+        WHERE uuid = $12
+        RETURNING uuid;
+      `;
+      const values = [
+        label_name, context, field_mapping,
+        bar_code_type, zpl_code, fields,
+        html_code, page_dimensions, output_mode, xdp_code, table_config,
+        uuid
+      ];
+      const result = await pool.query(updateQuery, values);
+      if (result.rowCount > 0) {
+        return res.status(200).json({ status: "success", uuid: uuid });
+      }
+    }
+
     const insertQuery = `
       INSERT INTO label_master (
         label_id, label_name, context, field_mapping, 
         bar_code_type, zpl_code, fields, version, 
         created_by, created_on,
-        html_code, page_dimensions, output_mode, xdp_code
+        html_code, page_dimensions, output_mode, xdp_code, table_config
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING uuid;
     `;
 
@@ -78,7 +121,7 @@ router.post('/save-label', async (req, res) => {
       label_id, label_name, context, field_mapping,
       bar_code_type, zpl_code, fields, version,
       created_by, created_on,
-      html_code, page_dimensions, output_mode, xdp_code
+      html_code, page_dimensions, output_mode, xdp_code, table_config
     ];
 
     const result = await pool.query(insertQuery, values);

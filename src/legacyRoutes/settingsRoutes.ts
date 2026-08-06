@@ -61,7 +61,8 @@ export async function initSettingsDb() {
     const columnsToAdd = [
       ["html_code", "TEXT"],
       ["page_dimensions", "TEXT"],
-      ["output_mode", "TEXT"]
+      ["output_mode", "TEXT"],
+      ["table_config", "JSONB"]
     ];
 
     for (const [colName, colType] of columnsToAdd) {
@@ -86,7 +87,58 @@ export async function initSettingsDb() {
       );
     `);
 
-    console.log("[INIT] System settings and label tables verified/created successfully.");
+    // 4. Create llm_traces table for observability
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS llm_traces (
+        id SERIAL PRIMARY KEY,
+        trace_id VARCHAR(50),
+        agent_name VARCHAR(100),
+        model_used VARCHAR(100),
+        prompt_tokens INT DEFAULT 0,
+        completion_tokens INT DEFAULT 0,
+        total_tokens INT DEFAULT 0,
+        duration_ms INT DEFAULT 0,
+        status VARCHAR(20),
+        prompt TEXT,
+        response TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 5. Create support_tickets table for support ticket tracking
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id SERIAL PRIMARY KEY,
+        ticket_id VARCHAR(50) UNIQUE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        priority VARCHAR(20) DEFAULT 'Medium',
+        status VARCHAR(20) DEFAULT 'New',
+        category VARCHAR(50) DEFAULT 'IT Operations',
+        subcategory VARCHAR(50) DEFAULT 'Software Issues',
+        requestor_email VARCHAR(100),
+        requestor_name VARCHAR(100),
+        tenant_id VARCHAR(50),
+        source VARCHAR(100),
+        logs TEXT,
+        screenshot TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Ensure screenshot column exists (migration helper for existing DB instances)
+    await client.query(`
+      DO $$ 
+      BEGIN 
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                         WHERE table_name='support_tickets' AND column_name='screenshot') THEN
+              ALTER TABLE support_tickets ADD COLUMN screenshot TEXT;
+          END IF;
+      END $$;
+    `);
+
+    console.log("[INIT] System settings, label tables, observability, and tickets DB verified/created successfully.");
   } catch (err) {
     console.error("[INIT ERROR] Failed to initialize system settings DB:", err);
   } finally {

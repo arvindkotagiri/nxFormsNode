@@ -4,7 +4,12 @@ import multer from 'multer';
 import sharp from 'sharp';
 import { DOMParser } from '@xmldom/xmldom';
 import { pdfToPng } from 'pdf-to-png-converter';
-import { callLLM } from '../utils/llmUtils';
+import { resolve } from 'path';
+
+// pdfjs-dist (used by pdf-to-png-converter) requires cMapsDir to end with a trailing slash
+// and must use forward slashes (URL format) — critical on Windows.
+const CMAP_DIR = resolve(require.resolve('pdfjs-dist/package.json'), '..', 'cmaps').replace(/\\/g, '/') + '/';
+import { callLangChainAgent } from '../utils/langchainCompat';
 
 const router = express.Router();
 const upload = multer({
@@ -52,7 +57,7 @@ router.post('/generate-xdp', upload.single('image'), async (req, res) => {
 
     if (filename.endsWith('.pdf')) {
       console.log("[INFO] Converting PDF pages to single stacked image for XDP...");
-      const pngPages = await pdfToPng(fileBytes, { viewportScale: 3.0 });
+      const pngPages = await pdfToPng(fileBytes, { viewportScale: 3.0, cMapsDir: CMAP_DIR });
       const numPages = pngPages.length;
 
       const pageImages = [];
@@ -106,9 +111,10 @@ router.post('/generate-xdp', upload.single('image'), async (req, res) => {
 
     const promptWithHtml = PROMPT_XDP.replace("__HTML_DESIGN_PLACEHOLDER__", htmlDesign);
 
-    // Call LLM for XDP structure
-    const rawResponse = await callLLM(
+    // Call LLM for XDP structure using LangChain agent wrapper
+    const rawResponse = await callLangChainAgent(
       'xdp',
+      'XDP Structure Generation Agent',
       promptWithHtml,
       null,
       imgBytes,
@@ -145,7 +151,7 @@ router.post('/generate-xdp', upload.single('image'), async (req, res) => {
     let previewXdp = xdpCode;
     try {
       const analysisPrompt = "Return JSON list of {'field_name': '...', 'value': '...'}";
-      const analysisRes = await callLLM('xdp', analysisPrompt, null, imgBytes, "application/json");
+      const analysisRes = await callLangChainAgent('xdp', 'XDP Fields Analysis Agent', analysisPrompt, null, imgBytes, "application/json");
       let fieldData = JSON.parse(analysisRes);
       if (fieldData && typeof fieldData === 'object') {
         if (Array.isArray(fieldData.fields)) fieldData = fieldData.fields;

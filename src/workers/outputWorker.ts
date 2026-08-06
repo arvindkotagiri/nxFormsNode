@@ -587,15 +587,46 @@ async function determineLabels(
 // Simulate an API call to fetch payload data
 async function fetchPayloadDataFromAPI(context: string, entityKey: string): Promise<Record<string, string | null>> {
   console.log(`[API2] Fetching payload data from API for context=${context}, entityKey=${entityKey}`);
-  
-  // Simulate network delay
+
+  // ── Live-fetch contexts: call the registered endpoint to get real data ────────
+  // Look up the context endpoint from the contexts table
+  const ctxRow = await pool.query(
+    `SELECT endpoint, auth_type, auth_url, client_id, client_secret
+     FROM contexts
+     WHERE LOWER(name) = LOWER($1) AND status = 'Active' LIMIT 1`,
+    [context]
+  );
+
+  if (ctxRow.rowCount && ctxRow.rowCount > 0) {
+    const ctx = ctxRow.rows[0];
+    const endpoint: string = ctx.endpoint || '';
+
+    // If this is a Sales Order context, route it to our local simulation endpoint
+    // which handles token retrieval, header enrichment, and OData fetching/mapping.
+    const isSalesOrder = context.toLowerCase() === 'sales order';
+    const targetUrl = isSalesOrder
+      ? `http://localhost:${process.env.PORT || 4000}/api/simulation/sap-sales-order`
+      : endpoint;
+
+    if (targetUrl && (isSalesOrder || targetUrl.includes('/api/simulation/') || targetUrl.includes('localhost'))) {
+      try {
+        const axios = (await import('axios')).default;
+        const liveUrl = entityKey ? `${targetUrl}?id=${encodeURIComponent(entityKey)}` : targetUrl;
+        const liveResp = await axios.get(liveUrl, { timeout: 15000 });
+        if (liveResp.status === 200 && liveResp.data && typeof liveResp.data === 'object') {
+          console.log(`[API2] Live payload fetched from ${liveUrl} for context=${context}`);
+          return liveResp.data;
+        }
+      } catch (liveErr: any) {
+        console.warn(`[API2] Live endpoint call failed (${targetUrl}): ${liveErr.message} — falling back to simulation_master`);
+      }
+    }
+  }
+
+  // ── Fallback: static simulation_master record ─────────────────────────────────
   await new Promise((resolve) => setTimeout(resolve, 100));
   const result = await pool.query(
-    `
-    SELECT input_values
-    FROM simulation_master
-    WHERE id = $1
-    `,
+    `SELECT input_values FROM simulation_master WHERE id = $1`,
     [entityKey]
   );
 
@@ -604,23 +635,8 @@ async function fetchPayloadDataFromAPI(context: string, entityKey: string): Prom
   }
 
   const inputValues = result.rows[0].input_values;
-
-  // If input_values is JSON/JSONB in Postgres
-  if (typeof inputValues === "object") {
-    return inputValues;
-  }
-
-  // If input_values is stored as TEXT
-  return JSON.parse(inputValues || "{}");
-  // Mocked data — in a real scenario, you would call the external API here
-  // return {
-  //   "Amount In Numbers": "10",
-  //   "Check Date": "04/14/2026",
-  //   "Recipient Name": "ABCD",
-  //   "Check Number": "20",
-  //   "Amount In Words": "Two Hundred Dollars",
-  //   "Vendor Address 1": "ABC 711"
-  // };
+  if (typeof inputValues === 'object') return inputValues;
+  return JSON.parse(inputValues || '{}');
 }
 
 async function fetchDocumentData(
