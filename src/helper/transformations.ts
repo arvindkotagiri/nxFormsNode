@@ -131,16 +131,201 @@ export const NULL_CHECK = (
 // Math Functions
 //////////////////////////
 
-export const ADD = (source: SourceData, source_field: string, operand: number | string) => {
-  const val1 = source[source_field];
-  const val2 = typeof operand === "string" ? source[operand] : operand;
-  return (val1 ?? 0) + (val2 ?? 0);
+const coerceToNumber = (value: unknown): number => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return 0;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (value == null) return 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 };
 
-export const SUBTRACT = (source: SourceData, source_field: string, operand: number | string) => {
-  const val1 = source[source_field];
-  const val2 = typeof operand === "string" ? source[operand] : operand;
-  return (val1 ?? 0) - (val2 ?? 0);
+const resolveFieldValue = (source: SourceData, fieldRef: string) => {
+  if (!fieldRef) return undefined;
+  const direct = source[fieldRef];
+  if (direct !== undefined) return direct;
+
+  const leaf = fieldRef.includes(".")
+    ? fieldRef.substring(fieldRef.lastIndexOf(".") + 1)
+    : fieldRef;
+  return source[leaf];
+};
+
+const resolveMathOperand = (
+  source: SourceData,
+  operand:
+    | number
+    | string
+    | {
+        operandType?: string;
+        operandField?: string;
+        operandFields?: string[] | string;
+        operandNumber?: string | number;
+      }
+) => {
+  if (typeof operand === "number") return operand;
+
+  if (typeof operand === "string") {
+    const trimmed = operand.trim();
+    if (!trimmed) return 0;
+
+    const asNumber = Number(trimmed);
+    if (Number.isFinite(asNumber)) return asNumber;
+
+    return coerceToNumber(resolveFieldValue(source, trimmed));
+  }
+
+  if (operand && (operand.operandNumber !== undefined || operand.operandField || operand.operandFields)) {
+    const numberPart = coerceToNumber(operand.operandNumber);
+    const singleFieldPart = operand.operandField
+      ? coerceToNumber(resolveFieldValue(source, operand.operandField))
+      : 0;
+
+    let multiFieldRefs: string[] = [];
+    if (Array.isArray(operand.operandFields)) {
+      multiFieldRefs = operand.operandFields;
+    } else if (typeof operand.operandFields === "string") {
+      const trimmed = operand.operandFields.trim();
+      if (trimmed) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            multiFieldRefs = parsed.map((v) => String(v).trim()).filter(Boolean);
+          } else {
+            multiFieldRefs = [trimmed];
+          }
+        } catch {
+          multiFieldRefs = [trimmed];
+        }
+      }
+    }
+
+    const multiFieldPart = multiFieldRefs.reduce((sum, ref) => {
+      return sum + coerceToNumber(resolveFieldValue(source, ref));
+    }, 0);
+
+    return numberPart + singleFieldPart + multiFieldPart;
+  }
+
+  if (operand && operand.operandType === "mapped_field" && operand.operandField) {
+    return coerceToNumber(resolveFieldValue(source, operand.operandField));
+  }
+
+  return 0;
+};
+
+type MathTerm = {
+  id?: string;
+  kind: "self" | "mapped" | "number";
+  operator?: "+" | "-";
+  value?: string;
+};
+
+const parseMathTerms = (raw: unknown): MathTerm[] => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw as MathTerm[];
+  if (typeof raw !== "string") return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed as MathTerm[];
+  } catch {
+    return [];
+  }
+};
+
+const evaluateMathTerms = (
+  source: SourceData,
+  sourceField: string,
+  operand: {
+    mathTerms?: unknown;
+    operandType?: string;
+    operandField?: string;
+    operandFields?: string[] | string;
+    operandNumber?: string | number;
+  }
+): number | null => {
+  const terms = parseMathTerms(operand.mathTerms)
+    .map((term) => ({
+      kind: term.kind,
+      operator: (term.operator === "-" ? "-" : "+") as "+" | "-",
+      value: term.value,
+    }))
+    .filter((term) => term.kind === "self" || (term.value ?? "").trim() !== "");
+
+  if (terms.length === 0) return null;
+
+  const resolveTermValue = (term: MathTerm) => {
+    if (term.kind === "self") return coerceToNumber(source[sourceField]);
+    if (term.kind === "number") return coerceToNumber(term.value);
+    return coerceToNumber(resolveFieldValue(source, term.value ?? ""));
+  };
+
+  let result = 0;
+  terms.forEach((term, index) => {
+    const value = resolveTermValue(term);
+    const op = term.operator === "-" ? "-" : "+";
+    if (index === 0) {
+      result = op === "-" ? -value : value;
+      return;
+    }
+    result = op === "+" ? result + value : result - value;
+  });
+
+  return result;
+};
+
+export const ADD = (
+  source: SourceData,
+  source_field: string,
+  operand:
+    | number
+    | string
+    | {
+        mathTerms?: unknown;
+        operandType?: string;
+        operandField?: string;
+        operandFields?: string[] | string;
+        operandNumber?: string | number;
+      }
+) => {
+  if (typeof operand === "object" && operand !== null && "mathTerms" in operand) {
+    const evaluated = evaluateMathTerms(source, source_field, operand);
+    if (evaluated !== null) return evaluated;
+  }
+
+  const val1 = coerceToNumber(source[source_field]);
+  const val2 = resolveMathOperand(source, operand);
+  return val1 + val2;
+};
+
+export const SUBTRACT = (
+  source: SourceData,
+  source_field: string,
+  operand:
+    | number
+    | string
+    | {
+        mathTerms?: unknown;
+        operandType?: string;
+        operandField?: string;
+        operandFields?: string[] | string;
+        operandNumber?: string | number;
+      }
+) => {
+  if (typeof operand === "object" && operand !== null && "mathTerms" in operand) {
+    const evaluated = evaluateMathTerms(source, source_field, operand);
+    if (evaluated !== null) return evaluated;
+  }
+
+  const val1 = coerceToNumber(source[source_field]);
+  const val2 = resolveMathOperand(source, operand);
+  return val1 - val2;
 };
 
 export const MULTIPLY = (source: SourceData, source_field: string, operand: number | string) => {

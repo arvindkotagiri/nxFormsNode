@@ -71,7 +71,27 @@ function applyTransformations(
       }
 
       if (step.value !== undefined) {
-        value = fn(tempSource, sourceField, step.value);
+        let operand = step.value;
+
+        if (step.type === "ADD" || step.type === "SUBTRACT") {
+          const numberOperand = step.values?.operandNumber;
+          const mappedFieldOperand = step.values?.operandField;
+          const mappedFieldOperands = step.values?.operandFields;
+          const mathTerms = step.values?.mathTerms;
+
+          if (mathTerms !== undefined || numberOperand !== undefined || mappedFieldOperand !== undefined || mappedFieldOperands !== undefined) {
+            operand = {
+              mathTerms,
+              operandNumber: numberOperand,
+              operandField: mappedFieldOperand,
+              operandFields: mappedFieldOperands,
+            };
+          } else if (step.values?.operandType === "mapped_field") {
+            operand = step.values?.operandField ?? step.value;
+          }
+        }
+
+        value = fn(tempSource, sourceField, operand);
       } else {
         value = fn(tempSource, sourceField);
       }

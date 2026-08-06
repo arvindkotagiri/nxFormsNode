@@ -123,7 +123,8 @@ router.post("/trigger", async (req, res) => {
 
   try {
     // ✅ FIX #2: Store the data payload as payload
-    const encryptedPayload = buildEncryptedPayload({
+    // const encryptedPayload = buildEncryptedPayload({
+    const encryptedPayload = ({
       event_id: eventId,
       source: source_system,
       context,
