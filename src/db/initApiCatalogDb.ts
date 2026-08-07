@@ -71,15 +71,26 @@ export async function populateEmptyGetUrls() {
       const rootEntity = enabledEntities.find((e: any) => e.isCore) || enabledEntities[0];
       if (!rootEntity) continue;
 
+      const rootEntityName = rootEntity.originalName || rootEntity.name || "";
+      if (!rootEntityName) continue;
+
       const getEntityBindings = (entity: any, allEntitiesList: any[]) => {
         const bindings = entity.navigationBindings || [];
         return bindings.filter((b: any) => {
-          return allEntitiesList.some((e: any) => e.originalName.toLowerCase() === b.target.toLowerCase() && e.enabled);
+          const bTarget = (b.target || "").toLowerCase();
+          if (!bTarget) return false;
+          return allEntitiesList.some((e: any) => {
+            const eName = (e.originalName || e.name || "").toLowerCase();
+            return eName === bTarget && e.enabled;
+          });
         });
       };
 
       const buildExpandString = (entityName: string, allEntitiesList: any[], visited = new Set<string>()): string => {
-        const entity = allEntitiesList.find((e: any) => e.originalName.toLowerCase() === entityName.toLowerCase());
+        const entity = allEntitiesList.find((e: any) => {
+          const eName = (e.originalName || e.name || "").toLowerCase();
+          return eName === entityName.toLowerCase();
+        });
         if (!entity || !entity.enabled) return "";
         const pathKey = entityName.toLowerCase();
         if (visited.has(pathKey)) return "";
@@ -89,11 +100,14 @@ export async function populateEmptyGetUrls() {
         if (bindings.length === 0) return "";
         const subExpands: string[] = [];
         for (const binding of bindings) {
-          const targetEntity = allEntitiesList.find(
-            (e: any) => e.originalName.toLowerCase() === binding.target.toLowerCase() && e.enabled
-          );
+          const targetEntity = allEntitiesList.find((e: any) => {
+            const eName = (e.originalName || e.name || "").toLowerCase();
+            const bTarget = (binding.target || "").toLowerCase();
+            return eName === bTarget && e.enabled;
+          });
           if (targetEntity) {
-            const nested = buildExpandString(targetEntity.originalName, allEntitiesList, nextVisited);
+            const targetEntityName = targetEntity.originalName || targetEntity.name || "";
+            const nested = buildExpandString(targetEntityName, allEntitiesList, nextVisited);
             if (nested) {
               subExpands.push(`${binding.path}($expand=${nested})`);
             } else {
@@ -104,13 +118,13 @@ export async function populateEmptyGetUrls() {
         return subExpands.join(",");
       };
 
-      const expandStr = buildExpandString(rootEntity.originalName, enabledEntities);
-      const rootFields = fields[rootEntity.originalName] || [];
+      const expandStr = buildExpandString(rootEntityName, enabledEntities);
+      const rootFields = fields[rootEntityName] || [];
       const keyField = rootFields.find((f: any) => f.isKey && f.enabled)
         || rootFields.find((f: any) => f.isKey)
         || rootFields[0];
 
-      const keyFieldName = keyField ? (keyField.name || keyField.originalName) : "SalesOrder";
+      const keyFieldName = keyField ? (keyField.originalName || keyField.name) : "SalesOrder";
       const defaultPlaceholder = `{{${keyFieldName}}}`;
       const filterQuery = keyField ? `$filter=${keyField.originalName || keyField.name} eq '${defaultPlaceholder}'` : "";
 
@@ -122,7 +136,7 @@ export async function populateEmptyGetUrls() {
       if (expandStr) queryParts.push(`$expand=${expandStr}`);
       queryParts.push("$format=json");
 
-      const getUrl = `${baseUrl}/${rootEntity.originalName}?${queryParts.join("&")}`;
+      const getUrl = `${baseUrl}/${rootEntityName}?${queryParts.join("&")}`;
       console.log(`[db] Migrating empty get_url for ID ${row.id} to: ${getUrl}`);
       await pool.query("UPDATE contexts SET get_url = $1 WHERE id = $2", [getUrl, row.id]);
     } catch (err: any) {
