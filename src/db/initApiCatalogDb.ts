@@ -61,6 +61,76 @@ export async function syncAllOutputDefinitionsFromContexts() {
   }
 }
 
+export async function populateEmptyGetUrls() {
+  const result = await pool.query("SELECT id, endpoint, entities, fields FROM contexts WHERE get_url IS NULL OR get_url = ''");
+  for (const row of result.rows) {
+    try {
+      const entities = typeof row.entities === 'string' ? JSON.parse(row.entities) : (row.entities || []);
+      const fields = typeof row.fields === 'string' ? JSON.parse(row.fields) : (row.fields || {});
+      const enabledEntities = entities.filter((e: any) => e?.enabled);
+      const rootEntity = enabledEntities.find((e: any) => e.isCore) || enabledEntities[0];
+      if (!rootEntity) continue;
+
+      const getEntityBindings = (entity: any, allEntitiesList: any[]) => {
+        const bindings = entity.navigationBindings || [];
+        return bindings.filter((b: any) => {
+          return allEntitiesList.some((e: any) => e.originalName.toLowerCase() === b.target.toLowerCase() && e.enabled);
+        });
+      };
+
+      const buildExpandString = (entityName: string, allEntitiesList: any[], visited = new Set<string>()): string => {
+        const entity = allEntitiesList.find((e: any) => e.originalName.toLowerCase() === entityName.toLowerCase());
+        if (!entity || !entity.enabled) return "";
+        const pathKey = entityName.toLowerCase();
+        if (visited.has(pathKey)) return "";
+        const nextVisited = new Set(visited);
+        nextVisited.add(pathKey);
+        const bindings = getEntityBindings(entity, allEntitiesList);
+        if (bindings.length === 0) return "";
+        const subExpands: string[] = [];
+        for (const binding of bindings) {
+          const targetEntity = allEntitiesList.find(
+            (e: any) => e.originalName.toLowerCase() === binding.target.toLowerCase() && e.enabled
+          );
+          if (targetEntity) {
+            const nested = buildExpandString(targetEntity.originalName, allEntitiesList, nextVisited);
+            if (nested) {
+              subExpands.push(`${binding.path}($expand=${nested})`);
+            } else {
+              subExpands.push(binding.path);
+            }
+          }
+        }
+        return subExpands.join(",");
+      };
+
+      const expandStr = buildExpandString(rootEntity.originalName, enabledEntities);
+      const rootFields = fields[rootEntity.originalName] || [];
+      const keyField = rootFields.find((f: any) => f.isKey && f.enabled)
+        || rootFields.find((f: any) => f.isKey)
+        || rootFields[0];
+
+      const keyFieldName = keyField ? (keyField.name || keyField.originalName) : "SalesOrder";
+      const defaultPlaceholder = `{{${keyFieldName}}}`;
+      const filterQuery = keyField ? `$filter=${keyField.originalName || keyField.name} eq '${defaultPlaceholder}'` : "";
+
+      let baseUrl = row.endpoint || "";
+      baseUrl = baseUrl.replace(/\/\$metadata\/?$/i, "").replace(/\/$/, "");
+
+      const queryParts: string[] = [];
+      if (filterQuery) queryParts.push(filterQuery);
+      if (expandStr) queryParts.push(`$expand=${expandStr}`);
+      queryParts.push("$format=json");
+
+      const getUrl = `${baseUrl}/${rootEntity.originalName}?${queryParts.join("&")}`;
+      console.log(`[db] Migrating empty get_url for ID ${row.id} to: ${getUrl}`);
+      await pool.query("UPDATE contexts SET get_url = $1 WHERE id = $2", [getUrl, row.id]);
+    } catch (err: any) {
+      console.error(`[db] Failed to migrate get_url for context ID ${row.id}: ${err.message}`);
+    }
+  }
+}
+
 export async function initApiCatalogDb(): Promise<void> {
   const client = await pool.connect();
   try {
@@ -237,6 +307,7 @@ export async function initApiCatalogDb(): Promise<void> {
     }
 
     await syncAllOutputDefinitionsFromContexts();
+    await populateEmptyGetUrls();
 
     // Seed Staples Purchase Order OData Context if missing
     const staplesEntities = JSON.stringify([
