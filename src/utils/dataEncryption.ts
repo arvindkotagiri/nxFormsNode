@@ -72,7 +72,33 @@ export function buildEncryptedPayload(row: unknown): string {
   return encryptValue(row);
 }
 
-export function maybeDecryptPayload(payload: string | null): unknown {
-  if (!payload) return null;
-  return decryptValue(payload);
+export function maybeDecryptPayload(payload: unknown): unknown {
+  if (payload === null || payload === undefined) return null;
+
+  if (typeof payload === "object") {
+    return payload;
+  }
+
+  if (typeof payload !== "string") {
+    return payload;
+  }
+
+  const trimmed = payload.trim();
+  if (!trimmed) return null;
+
+  // Backward compatibility: older rows may have stored plaintext JSON.
+  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed;
+    }
+  }
+
+  try {
+    return decryptValue(trimmed);
+  } catch {
+    // Backward compatibility: if decryption fails, keep raw string.
+    return trimmed;
+  }
 }

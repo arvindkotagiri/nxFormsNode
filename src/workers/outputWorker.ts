@@ -278,6 +278,7 @@ import { pool } from "../db";
 import { v4 as uuidv4 } from "uuid";
 import { newprocessOutputAgent, processOutputAgent } from "./printWorker";
 import { buildEncryptedPayload, maybeDecryptPayload } from "../utils/dataEncryption";
+import { ContextConfig, fetchContextPayload } from "../services/payloadFetch";
 
 const OUTPUT_FORMAT_MAP: Record<string, string[]> = {
   html: ["HTML"],
@@ -501,30 +502,42 @@ async function determineLabels(
   simulate: boolean,
   props: Record<string, any>
 ): Promise<Array<{ label_id: string; label_name: string; printer: string | null }>> {
-  if (simulate) {
+  const requestedFormId = String(props?.form_id ?? "").trim();
+
+  if (simulate && requestedFormId) {
     const result = await pool.query(
       `
       SELECT label_id, label_name
       FROM label_master
       WHERE label_id = $1
       `,
-      [props.form_id]
+      [requestedFormId]
     );
-    return result.rows;
-  }
-  else {
-  const {
-    customer,
-    plant,
-    company_code,
-    sales_organization,
-    warehouse,
-    shipping_point,
-    process_type,
-  } = docData;
 
-  const result = await pool.query(
-    `
+    if ((result.rowCount ?? 0) === 0) {
+      console.warn(`[API2] simulate=true with form_id=${requestedFormId}, but no label_master row found. Falling back to rule-based determination.`);
+    } else {
+      return result.rows;
+    }
+  }
+
+  if (simulate && !requestedFormId) {
+    console.info("[API2] simulate=true and form_id is empty. Using rule-based label determination.");
+  }
+
+  {
+    const {
+      customer,
+      plant,
+      company_code,
+      sales_organization,
+      warehouse,
+      shipping_point,
+      process_type,
+    } = docData;
+
+    const result = await pool.query(
+      `
     SELECT
       lc.label_id,
       lc.label_name,
@@ -569,103 +582,109 @@ async function determineLabels(
 
     ORDER BY exact_matches DESC, lc.priority ASC
     `,
-    [
-      customer,
-      plant,
-      company_code,
-      sales_organization,
-      warehouse,
-      shipping_point,
-      process_type,
-    ]
-  );
+      [
+        customer,
+        plant,
+        company_code,
+        sales_organization,
+        warehouse,
+        shipping_point,
+        process_type,
+      ]
+    );
 
-  return result.rows;
+    return result.rows;
   }
 }
 
-// Simulate an API call to fetch payload data
-async function fetchPayloadDataFromAPI(context: string, entityKey: string): Promise<Record<string, string | null>> {
-  console.log(`[API2] Fetching payload data from API for context=${context}, entityKey=${entityKey}`);
+async function fetchPayloadDataFromAPI(
+  context: string,
+  entityKey: string,
+): Promise<Record<string, unknown>> {
+  console.log(`[API2] Fetching payload data for context=${context}, entity_key=${entityKey}`);
 
-  // ── Live-fetch contexts: call the registered endpoint to get real data ────────
-  // Look up the context endpoint from the contexts table
   const ctxRow = await pool.query(
-    `SELECT endpoint, auth_type, auth_url, client_id, client_secret
+    `SELECT
+      name,
+      endpoint,
+      auth_type,
+      auth_url,
+      client_id,
+      client_secret,
+      username,
+      password,
+      entities,
+      fields
      FROM contexts
      WHERE LOWER(name) = LOWER($1) AND status = 'Active' LIMIT 1`,
-    [context]
+    [context],
   );
 
-  if (ctxRow.rowCount && ctxRow.rowCount > 0) {
-    const ctx = ctxRow.rows[0];
-    const endpoint: string = ctx.endpoint || '';
+  if (!ctxRow.rowCount || ctxRow.rowCount === 0) {
+    throw new Error(`No active context configuration found for context=\"${context}\"`);
+  }
 
-    // If this is a Sales Order context, route it to our local simulation endpoint
-    // which handles token retrieval, header enrichment, and OData fetching/mapping.
-    const isSalesOrder = context.toLowerCase() === 'sales order';
-    const targetUrl = isSalesOrder
-      ? `http://localhost:${process.env.PORT || 4000}/api/simulation/sap-sales-order`
-      : endpoint;
+  const ctx = ctxRow.rows[0] as ContextConfig;
+  const endpoint = String(ctx.endpoint ?? "").trim();
 
-    if (targetUrl && (isSalesOrder || targetUrl.includes('/api/simulation/') || targetUrl.includes('localhost'))) {
-      try {
-        const axios = (await import('axios')).default;
-        const liveUrl = entityKey ? `${targetUrl}?id=${encodeURIComponent(entityKey)}` : targetUrl;
-        const liveResp = await axios.get(liveUrl, { timeout: 15000 });
-        if (liveResp.status === 200 && liveResp.data && typeof liveResp.data === 'object') {
-          console.log(`[API2] Live payload fetched from ${liveUrl} for context=${context}`);
-          return liveResp.data;
-        }
-      } catch (liveErr: any) {
-        console.warn(`[API2] Live endpoint call failed (${targetUrl}): ${liveErr.message} — falling back to simulation_master`);
-      }
+  if (!endpoint) {
+    throw new Error(`Context ${context} is missing endpoint configuration`);
+  }
+
+  const isLocalSimulationEndpoint = endpoint.includes("/api/simulation/");
+  if (isLocalSimulationEndpoint) {
+    const axios = (await import("axios")).default;
+    const connector = endpoint.includes("?") ? "&" : "?";
+    const simulationUrl = `${endpoint}${connector}id=${encodeURIComponent(entityKey)}`;
+
+    console.info(`[API2] Simulation endpoint request URL: ${simulationUrl}`);
+
+    const simulationResp = await axios.get(simulationUrl, {
+      timeout: Number(process.env.ODATA_REQUEST_TIMEOUT_MS ?? 30000),
+      headers: { Accept: "application/json" },
+    });
+
+    console.info(`[API2] Simulation endpoint status: ${simulationResp.status}`);
+    if (!simulationResp.data || typeof simulationResp.data !== "object") {
+      throw new Error("Simulation endpoint returned a non-JSON payload");
     }
+
+    return simulationResp.data as Record<string, unknown>;
   }
 
-  // ── Fallback: static simulation_master record ─────────────────────────────────
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  const result = await pool.query(
-    `SELECT input_values FROM simulation_master WHERE id = $1`,
-    [entityKey]
+  return fetchContextPayload(
+    {
+      ...ctx,
+      name: String(ctx.name || context),
+    },
+    entityKey,
   );
-
-  if (result.rows.length === 0) {
-    throw new Error(`No payload found for entityKey=${entityKey}`);
-  }
-
-  const inputValues = result.rows[0].input_values;
-  if (typeof inputValues === 'object') return inputValues;
-  return JSON.parse(inputValues || '{}');
 }
 
-async function fetchDocumentData(
-  entityKey: string,
-  context: string
-): Promise<Record<string, string | null>> {
-  // ── STUB ───────────────────────────────────────────────────────────────────
-  console.warn(
-    `[API2] STUB: fetchDocumentData called for entity_key=${entityKey} context=${context}. ` +
-    `Returning mock org fields. Replace with real API call when ready.`
-  );
-  return {
-    // customer: "C001",
-    // plant: "P001",
-    // company_code: null,
-    // sales_organization: null,
-    // warehouse: null,
-    // shipping_point: null,
-    // "process_type": "INBD",
-    "sales_organization": "2000",
-    "warehouse": "2001"
-  };
-  // ── END STUB ───────────────────────────────────────────────────────────────
+function firstNonEmptyString(source: Array<unknown>): string | null {
+  for (const value of source) {
+    if (value === null || value === undefined) continue;
+    const asString = String(value).trim();
+    if (asString) return asString;
+  }
+  return null;
+}
 
-  // Uncomment when real endpoint is available:
-  // const url = `https://your-source-api/data/${context}/${entityKey}`;
-  // const response = await fetch(url, { /* auth headers */ });
-  // if (!response.ok) throw new Error(`Source API returned ${response.status}`);
-  // return response.json();
+function extractDeterminationInput(payloadData: Record<string, unknown>): Record<string, string | null> {
+  const root = payloadData;
+  const d = payloadData.d && typeof payloadData.d === "object"
+    ? (payloadData.d as Record<string, unknown>)
+    : {};
+
+  return {
+    customer: firstNonEmptyString([root.customer, root.Customer, root.sold_to_party, d.SoldToParty, root.SoldToParty]),
+    plant: firstNonEmptyString([root.plant, root.Plant, d.Plant]),
+    company_code: firstNonEmptyString([root.company_code, root.CompanyCode, d.CompanyCode]),
+    sales_organization: firstNonEmptyString([root.sales_organization, root.SalesOrganization, d.SalesOrganization]),
+    warehouse: firstNonEmptyString([root.warehouse, root.Warehouse, d.Warehouse]),
+    shipping_point: firstNonEmptyString([root.shipping_point, root.ShippingPoint, d.ShippingPoint]),
+    process_type: firstNonEmptyString([root.process_type, root.ProcessType, d.ProcessType, d.SalesOrderType]),
+  };
 }
 
 export async function newprocessOutputDetermination(eventId: string, simulate: boolean, props: any): Promise<void> {
@@ -705,18 +724,18 @@ export async function newprocessOutputDetermination(eventId: string, simulate: b
     const { context, entity_key } = event;
 
     // ── 3. Fetch document data ────────────────────────────────────────────────
-    let payloadData: Record<string, string | null> = {};
+    let payloadData: Record<string, unknown> = {};
 
     try {
       payloadData = await fetchPayloadDataFromAPI(context, entity_key);
-    } catch (err) {
-      console.error(`[API2] Failed to fetch payload data from API:`, err);
-      await newfinalizeEvent(eventId, "Failed", "Failed to fetch payload data", startTime, 0);
+    } catch (err: any) {
+      const reason = err instanceof Error ? err.message : "Unknown payload fetch failure";
+      console.error(`[API2] Failed to fetch payload data from API: ${reason}`);
+      await newfinalizeEvent(eventId, "Failed", `Failed to fetch payload data: ${reason}`, startTime, 0);
       return;
     }
 
-    const orgData = await fetchDocumentData(entity_key, context);
-    const determinationInput = { ...orgData };
+    const determinationInput = extractDeterminationInput(payloadData);
 
     const matchedLabels = await determineLabels(determinationInput, simulate, props);
     console.log("here", matchedLabels);
