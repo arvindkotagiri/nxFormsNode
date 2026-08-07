@@ -113,7 +113,7 @@ router.get("/", async (req, res) => {
 router.post("/trigger", async (req, res) => {
   const props = req.body;
   const { context, entity_key, event_type, triggered_by, source_system, print_to_file, simulate = false, form_id = ''} = req.body;
-  if (!context || !entity_key || !event_type || !triggered_by || !source_system || !print_to_file) {
+  if (!context || !entity_key || !event_type || !triggered_by || !source_system || print_to_file === undefined || print_to_file === null) {
     return res.status(400).json({ 
       error: "Missing mandatory fields: context, entity_key, event_type, triggered_by, source_system, print_to_file" 
     });

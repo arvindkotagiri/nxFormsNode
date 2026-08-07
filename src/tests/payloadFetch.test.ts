@@ -202,3 +202,33 @@ test("handles unexpected but valid schema changes by extracting first collection
   const d = payload.d as Record<string, unknown>;
   assert.equal(Array.isArray((d.items as Record<string, unknown>).results), true);
 });
+
+test("replaces any get_url placeholder token with entity_key", async () => {
+  const calls: string[] = [];
+  const http: MockHttp = {
+    post: async () => ({ status: 200, data: {} }),
+    get: async (url: string) => {
+      calls.push(url);
+      return {
+        status: 200,
+        data: {
+          value: [{ SalesOrder: "203" }],
+        },
+      };
+    },
+  };
+
+  await fetchContextPayload(
+    {
+      name: "Sales Order V2",
+      endpoint: "https://example.test/odata/v4/sales-order",
+      get_url: "https://example.test/odata/v4/sales-order/SalesOrders?$filter=SalesOrder eq '{{SalesOrder}}'&$expand=to_Item",
+      auth_type: "None",
+    },
+    "203",
+    { httpClient: http, logger: createNoopLogger() },
+  );
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /SalesOrder eq '203'/);
+});

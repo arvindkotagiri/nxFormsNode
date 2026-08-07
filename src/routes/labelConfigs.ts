@@ -37,6 +37,20 @@ const labelConfigCreateSchema = z.object({
 
 const labelConfigUpdateSchema = labelConfigCreateSchema.partial();
 
+function mergeConditionMaps(
+  ...maps: Array<Record<string, string> | null | undefined>
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const map of maps) {
+    if (!map || typeof map !== "object") continue;
+    for (const [key, value] of Object.entries(map)) {
+      if (value === undefined || value === null) continue;
+      merged[key] = String(value);
+    }
+  }
+  return merged;
+}
+
 /**
  * STEP 7: Validate reference fields exist in Postgres reference tables
  * (prevents invalid values even if someone calls API manually)
@@ -63,28 +77,13 @@ async function assertFormExists(table: string, id: string, label: string) {
 }
 
 async function validateRefsForCreate(body: z.infer<typeof labelConfigCreateSchema>) {
-  // Only validate if values are provided (non-null/ non-empty)
-  if (body.customer) await assertRefExists("ref_customers", body.customer, "Customer");
-  if (body.plant) await assertRefExists("ref_plants", body.plant, "Plant");
-  if (body.company_code) await assertRefExists("ref_company_codes", body.company_code, "Company code");
-  if (body.sales_organization) await assertRefExists("ref_sales_orgs", body.sales_organization, "Sales org");
-  if (body.warehouse) await assertRefExists("ref_warehouses", body.warehouse, "Warehouse");
-  if (body.shipping_point) await assertRefExists("ref_shipping_points", body.shipping_point, "Shipping point");
-  if (body.process_type) await assertRefExists("ref_process_types", body.process_type, "Process type");
+  // Organizational condition fields accept any free-text value at runtime.
+  // Only validate references that must exist in master data.
   if (body.label_id) await assertFormExists("label_master", body.label_id, "Label");
   if (body.printer) await assertRefExists("printer_master", body.printer, "Printer");
 }
 
 async function validateRefsForUpdate(body: z.infer<typeof labelConfigUpdateSchema>) {
-  // Validate only fields that are being updated (provided !== undefined)
-  // (If provided as null/empty string, we treat as clearing the field -> no validation needed)
-  if (body.customer !== undefined && body.customer) await assertRefExists("ref_customers", body.customer, "Customer");
-  if (body.plant !== undefined && body.plant) await assertRefExists("ref_plants", body.plant, "Plant");
-  if (body.company_code !== undefined && body.company_code) await assertRefExists("ref_company_codes", body.company_code, "Company code");
-  if (body.sales_organization !== undefined && body.sales_organization) await assertRefExists("ref_sales_orgs", body.sales_organization, "Sales org");
-  if (body.warehouse !== undefined && body.warehouse) await assertRefExists("ref_warehouses", body.warehouse, "Warehouse");
-  if (body.shipping_point !== undefined && body.shipping_point) await assertRefExists("ref_shipping_points", body.shipping_point, "Shipping point");
-  if (body.process_type !== undefined && body.process_type) await assertRefExists("ref_process_types", body.process_type, "Process type");
   if (body.label_id !== undefined && body.label_id) await assertFormExists("label_master", body.label_id, "Label");
   if (body.printer !== undefined && body.printer) await assertRefExists("printer_master", body.printer, "Printer");
 }
@@ -173,7 +172,12 @@ router.get("/", async (req, res) => {
       }
     }
 
-    const conditions = r.custom_fields ?? r.output_conditions ?? decryptedPayload?.custom_fields ?? decryptedPayload?.output_conditions ?? {};
+    const conditions = mergeConditionMaps(
+      decryptedPayload?.output_conditions,
+      decryptedPayload?.custom_fields,
+      r.output_conditions,
+      r.custom_fields,
+    );
 
     return {
       config_id: r.config_id,
@@ -224,7 +228,7 @@ router.post("/", async (req: AuthedRequest, res) => {
     return res.status(e.statusCode || 400).json({ detail: e.message || "Invalid reference" });
   }
 
-  const conditions = body.custom_fields ?? body.output_conditions ?? {};
+  const conditions = mergeConditionMaps(body.output_conditions, body.custom_fields);
 
   const encryptedPayload = buildEncryptedPayload({
     label_name: body.label_name,
@@ -321,70 +325,79 @@ router.post("/", async (req: AuthedRequest, res) => {
 router.get("/:config_id", async (req, res) => {
   const { config_id } = req.params;
 
-  const sql = `
-    SELECT
-      config_id::text,
-      label_name,
-      label_id,
-      customer,
-      plant,
-      company_code,
-      sales_organization,
-      warehouse,
-      shipping_point,
-      process_type,
-      number_of_labels,
-      priority,
-      active,
-      to_char(valid_from, 'YYYY-MM-DD') as valid_from,
-      to_char(valid_to, 'YYYY-MM-DD') as valid_to,
-      printer,
-      output_conditions,
-      custom_fields,
-      encrypted_payload,
-      ${AUDIT_SELECT_SQL}
-    FROM label_configs
-    WHERE config_id = $1::integer
-    LIMIT 1;
-  `;
-  const result = await pool.query(sql, [parseInt(config_id, 10)]);
-  if (!result.rows[0]) return res.status(404).json({ detail: "Configuration not found" });
+  try {
+    const sql = `
+      SELECT
+        config_id::text,
+        label_name,
+        label_id,
+        customer,
+        plant,
+        company_code,
+        sales_organization,
+        warehouse,
+        shipping_point,
+        process_type,
+        number_of_labels,
+        priority,
+        active,
+        to_char(valid_from, 'YYYY-MM-DD') as valid_from,
+        to_char(valid_to, 'YYYY-MM-DD') as valid_to,
+        printer,
+        output_conditions,
+        custom_fields,
+        encrypted_payload,
+        ${AUDIT_SELECT_SQL}
+      FROM label_configs
+      WHERE config_id::text = $1
+      LIMIT 1;
+    `;
+    const result = await pool.query(sql, [config_id]);
+    if (!result.rows[0]) return res.status(404).json({ detail: "Configuration not found" });
 
-  let decryptedPayload: any = null;
-  if (result.rows[0].encrypted_payload) {
-    try {
-      decryptedPayload = maybeDecryptPayload(result.rows[0].encrypted_payload) as any;
-    } catch (err) {
-      console.warn("Failed to decrypt label config payload:", err);
+    let decryptedPayload: any = null;
+    if (result.rows[0].encrypted_payload) {
+      try {
+        decryptedPayload = maybeDecryptPayload(result.rows[0].encrypted_payload) as any;
+      } catch (err) {
+        console.warn("Failed to decrypt label config payload:", err);
+      }
     }
+
+    const conditions = mergeConditionMaps(
+      decryptedPayload?.output_conditions,
+      decryptedPayload?.custom_fields,
+      result.rows[0].output_conditions,
+      result.rows[0].custom_fields,
+    );
+
+    return res.json({
+      config_id: result.rows[0].config_id,
+      label_name: decryptedPayload?.label_name ?? result.rows[0].label_name,
+      label_id: decryptedPayload?.label_id ?? result.rows[0].label_id,
+      customer: decryptedPayload?.customer ?? result.rows[0].customer,
+      plant: decryptedPayload?.plant ?? result.rows[0].plant,
+      company_code: decryptedPayload?.company_code ?? result.rows[0].company_code,
+      sales_organization: decryptedPayload?.sales_organization ?? result.rows[0].sales_organization,
+      warehouse: decryptedPayload?.warehouse ?? result.rows[0].warehouse,
+      shipping_point: decryptedPayload?.shipping_point ?? result.rows[0].shipping_point,
+      process_type: decryptedPayload?.process_type ?? result.rows[0].process_type,
+      number_of_labels: decryptedPayload?.number_of_labels ?? result.rows[0].number_of_labels,
+      priority: decryptedPayload?.priority ?? result.rows[0].priority,
+      active: decryptedPayload?.active ?? result.rows[0].active,
+      valid_from: decryptedPayload?.valid_from ?? result.rows[0].valid_from,
+      valid_to: decryptedPayload?.valid_to ?? result.rows[0].valid_to,
+      printer: decryptedPayload?.printer ?? result.rows[0].printer,
+      output_conditions: conditions,
+      custom_fields: conditions,
+      created_by: result.rows[0].created_by,
+      created_on: result.rows[0].created_on,
+      updated_by: result.rows[0].updated_by,
+      updated_on: result.rows[0].updated_on,
+    });
+  } catch (e: any) {
+    return res.status(500).json({ detail: e?.message || "Failed to load configuration" });
   }
-
-  const conditions = result.rows[0].custom_fields ?? result.rows[0].output_conditions ?? decryptedPayload?.custom_fields ?? decryptedPayload?.output_conditions ?? {};
-
-  return res.json({
-    config_id: result.rows[0].config_id,
-    label_name: decryptedPayload?.label_name ?? result.rows[0].label_name,
-    label_id: decryptedPayload?.label_id ?? result.rows[0].label_id,
-    customer: decryptedPayload?.customer ?? result.rows[0].customer,
-    plant: decryptedPayload?.plant ?? result.rows[0].plant,
-    company_code: decryptedPayload?.company_code ?? result.rows[0].company_code,
-    sales_organization: decryptedPayload?.sales_organization ?? result.rows[0].sales_organization,
-    warehouse: decryptedPayload?.warehouse ?? result.rows[0].warehouse,
-    shipping_point: decryptedPayload?.shipping_point ?? result.rows[0].shipping_point,
-    process_type: decryptedPayload?.process_type ?? result.rows[0].process_type,
-    number_of_labels: decryptedPayload?.number_of_labels ?? result.rows[0].number_of_labels,
-    priority: decryptedPayload?.priority ?? result.rows[0].priority,
-    active: decryptedPayload?.active ?? result.rows[0].active,
-    valid_from: decryptedPayload?.valid_from ?? result.rows[0].valid_from,
-    valid_to: decryptedPayload?.valid_to ?? result.rows[0].valid_to,
-    printer: decryptedPayload?.printer ?? result.rows[0].printer,
-    output_conditions: conditions,
-    custom_fields: conditions,
-    created_by: result.rows[0].created_by,
-    created_on: result.rows[0].created_on,
-    updated_by: result.rows[0].updated_by,
-    updated_on: result.rows[0].updated_on,
-  });
 });
 
 /**
@@ -429,9 +442,9 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
       custom_fields,
       encrypted_payload
      FROM label_configs
-     WHERE config_id = $1::integer
+     WHERE config_id::text = $1
      LIMIT 1`,
-    [parseInt(config_id as string, 10)]
+    [config_id]
   );
 
   if (!existingResult.rows[0]) {
@@ -452,7 +465,15 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
     }
   }
 
-  const conditions = body.custom_fields !== undefined ? body.custom_fields : (body.output_conditions !== undefined ? body.output_conditions : undefined);
+  const hasConditionUpdate = body.custom_fields !== undefined || body.output_conditions !== undefined;
+  const conditions = hasConditionUpdate
+    ? mergeConditionMaps(
+        existingData.output_conditions,
+        existingData.custom_fields,
+        body.output_conditions,
+        body.custom_fields,
+      )
+    : undefined;
 
   const updatedPayload = buildEncryptedPayload({
     label_name: body.label_name ?? existingData.label_name,
@@ -503,7 +524,7 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
   setField("valid_from", body.valid_from ?? null, "date");
   setField("valid_to", body.valid_to ?? null, "date");
   setField("printer", body.printer ?? null);
-  if (conditions !== undefined) {
+  if (hasConditionUpdate && conditions !== undefined) {
     setParts.push(`output_conditions = $${i++}::jsonb`);
     values.push(JSON.stringify(conditions));
     setParts.push(`custom_fields = $${i++}::jsonb`);
@@ -520,12 +541,12 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
     return res.status(400).json({ detail: "No fields provided to update" });
   }
 
-  values.push(parseInt(config_id as string, 10));
+  values.push(config_id);
 
   const sql = `
     UPDATE label_configs
     SET ${setParts.join(", ")}
-    WHERE config_id = $${i}::integer
+    WHERE config_id::text = $${i}
     RETURNING
       config_id::text,
       label_name,
@@ -561,14 +582,17 @@ router.put("/:config_id", async (req: AuthedRequest, res) => {
 // router.delete("/:config_id", requireUser, requireConfigurator, async (req, res) => {
 router.delete("/:config_id", async (req, res) => {
   const { config_id } = req.params;
+  try {
+    const result = await pool.query(
+      `DELETE FROM label_configs WHERE config_id = $1`,
+      [config_id]
+    );
 
-  const result = await pool.query(
-    `DELETE FROM label_configs WHERE config_id = $1::integer`,
-    [parseInt(config_id, 10)]
-  );
-
-  if (result.rowCount === 0) return res.status(404).json({ detail: "Configuration not found" });
-  return res.json({ message: "Configuration deleted successfully" });
+    if (result.rowCount === 0) return res.status(404).json({ detail: "Configuration not found" });
+    return res.json({ message: "Configuration deleted successfully" });
+  } catch (e: any) {
+    return res.status(500).json({ detail: e?.message || "Failed to delete configuration" });
+  }
 });
 
 export default router;

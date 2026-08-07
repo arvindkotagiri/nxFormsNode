@@ -3,6 +3,7 @@ import axios, { AxiosError } from "axios";
 export type ContextConfig = {
   name: string;
   endpoint: string;
+  get_url?: string | null;
   auth_type?: string | null;
   auth_url?: string | null;
   client_id?: string | null;
@@ -55,16 +56,16 @@ function escapeODataString(value: string): string {
 }
 
 function hasEntityPlaceholder(url: string): boolean {
-  return /\{\{?\s*entity_key\s*\}?\}|:entity_key|\$ENTITY_KEY\$/i.test(url);
+  return /\{\{[^{}]+\}\}|\{[^{}]+\}|:[A-Za-z_][A-Za-z0-9_-]*\b|\$[A-Za-z_][A-Za-z0-9_]*\$/.test(url);
 }
 
 function replaceEntityPlaceholder(url: string, entityKey: string): string {
   const encoded = encodeURIComponent(entityKey);
   return url
-    .replace(/\{\{\s*entity_key\s*\}\}/gi, encoded)
-    .replace(/\{\s*entity_key\s*\}/gi, encoded)
-    .replace(/:entity_key\b/gi, encoded)
-    .replace(/\$ENTITY_KEY\$/gi, encoded);
+    .replace(/\{\{[^{}]+\}\}/g, encoded)
+    .replace(/\{[^{}]+\}/g, encoded)
+    .replace(/:[A-Za-z_][A-Za-z0-9_-]*\b/g, encoded)
+    .replace(/\$[A-Za-z_][A-Za-z0-9_]*\$/g, encoded);
 }
 
 function replaceFilterOperand(endpoint: string, entityKey: string): string | null {
@@ -244,7 +245,7 @@ function getBaseQuery(endpoint: string): URLSearchParams {
 }
 
 function buildCandidateUrls(ctx: ContextConfig, entityKey: string): string[] {
-  const endpoint = String(ctx.endpoint || "").trim();
+  const endpoint = String(ctx.get_url || ctx.endpoint || "").trim();
   if (!endpoint) return [];
 
   if (hasEntityPlaceholder(endpoint)) {

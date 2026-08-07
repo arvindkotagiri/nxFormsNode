@@ -13,6 +13,7 @@ import net from "net";
 import puppeteer, { Browser } from "puppeteer";
 import * as TF from "../helper/transformations";
 import Handlebars from "handlebars";
+const ipp = require("ipp");
 
 const MAX_RETRIES = Number(process.env.MAX_RETRIES ?? 3);
 
@@ -29,10 +30,134 @@ interface LabelMaster {
   html_code: string | null;
   zpl_code: string | null;
   xdp_code: string | null;
-  field_mapping: Record<string, string> | null;
-  // field_mapping stores { templatePlaceholder: documentJsonField }
-  // e.g. { "Amount": "Amount", "CheckDate": "CheckDate" }
+  field_mapping: Record<string, any> | null;
+  // field_mapping stores objects like:
+  // { "Amount": { path: "SalesOrders.Total", transformations: [] } }
   table_config: any | null; // SAP-style entity set loop configuration
+}
+
+function normalizeObjectKeys(source: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(source)) {
+    out[k] = v;
+    out[k.toLowerCase()] = v;
+  }
+  return out;
+}
+
+function getObjectValueCaseInsensitive(source: Record<string, any>, key: string): any {
+  if (Object.prototype.hasOwnProperty.call(source, key)) {
+    return source[key];
+  }
+  const lower = key.toLowerCase();
+  for (const [k, v] of Object.entries(source)) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  return undefined;
+}
+
+function findValueByLeafDeep(source: any, targetLeaf: string): any {
+  if (!source || !targetLeaf) return undefined;
+
+  let weakMatch: any = undefined;
+
+  const isStrongValue = (value: any): boolean => {
+    if (value === undefined || value === null) return false;
+    if (typeof value === "string") return value.trim() !== "";
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  };
+
+  const visit = (node: any): any => {
+    if (node == null) return undefined;
+
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        const found = visit(item);
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    }
+
+    if (typeof node !== "object") return undefined;
+
+    const direct = getObjectValueCaseInsensitive(node as Record<string, any>, targetLeaf);
+    if (direct !== undefined) {
+      if (isStrongValue(direct)) return direct;
+      if (weakMatch === undefined) weakMatch = direct;
+    }
+
+    const results = (node as any).results;
+    if (Array.isArray(results)) {
+      const foundInResults = visit(results);
+      if (foundInResults !== undefined) return foundInResults;
+    }
+
+    for (const value of Object.values(node)) {
+      const found = visit(value);
+      if (found !== undefined) return found;
+    }
+
+    return undefined;
+  };
+
+  const strong = visit(source);
+  if (strong !== undefined) return strong;
+  return weakMatch;
+}
+
+function resolvePathValue(source: any, path: string): any {
+  if (!source || !path) return undefined;
+
+  if (typeof source === "object" && source !== null) {
+    const direct = getObjectValueCaseInsensitive(source as Record<string, any>, path);
+    if (direct !== undefined) return direct;
+  }
+
+  const parts = path.split(".").filter(Boolean);
+  let current: any = source;
+  let pathResolved = true;
+
+  for (const part of parts) {
+    if (current == null) {
+      pathResolved = false;
+      break;
+    }
+
+    if (Array.isArray(current)) {
+      current = current[0];
+    }
+
+    if (current && typeof current === "object" && Array.isArray(current.results)) {
+      current = current.results[0];
+    }
+
+    if (!current || typeof current !== "object") {
+      pathResolved = false;
+      break;
+    }
+    current = getObjectValueCaseInsensitive(current as Record<string, any>, part);
+    if (current === undefined) {
+      pathResolved = false;
+      break;
+    }
+  }
+
+  if (pathResolved && current && typeof current === "object" && Array.isArray((current as any).results)) {
+    const arr = (current as any).results;
+    return arr.length > 0 ? arr[0] : undefined;
+  }
+  if (pathResolved && Array.isArray(current)) {
+    if (current.length === 0) return "";
+    if (current.every((v) => v == null || typeof v !== "object")) {
+      return current.join(", ");
+    }
+    return current[0];
+  }
+  if (pathResolved && current !== undefined) return current;
+
+  const leaf = parts.length > 0 ? parts[parts.length - 1] : path;
+  return findValueByLeafDeep(source, leaf);
 }
 
 // ── Apply transformations ──────────────────────────────────────────────────────────
@@ -40,14 +165,25 @@ function applyTransformations(
   source: Record<string, any>,
   mapping: any
 ) {
-  console.log("moo",source,"baa",mapping)
-  // const sourceField = mapping.path;
-  const sourceField = mapping.path.substring(mapping.path.lastIndexOf('.') + 1);;
+  const mappingPath = String(mapping?.path ?? "").trim();
+  const sourceField = mappingPath.includes(".")
+    ? mappingPath.substring(mappingPath.lastIndexOf(".") + 1)
+    : mappingPath;
 
   // create a mutable working copy
-  const tempSource = { ...source };
+  const tempSource = normalizeObjectKeys({ ...source });
 
-  let value = tempSource[sourceField];
+  let value = resolvePathValue(source, mappingPath);
+  if (value === undefined && sourceField) {
+    value = resolvePathValue(source, sourceField);
+  }
+
+  if (mappingPath) {
+    tempSource[mappingPath] = value;
+  }
+  if (sourceField) {
+    tempSource[sourceField] = value;
+  }
 
   if (!mapping.transformations || mapping.transformations.length === 0) {
     return value;
@@ -110,7 +246,7 @@ function executeIfElse(source: any, conditions: any[]) {
 
   for (const cond of conditions) {
 
-    const left = source[cond.field];
+    const left = resolvePathValue(source, String(cond.field ?? ""));
     const right = cond.value;
 
     let result = false;
@@ -180,8 +316,8 @@ function resolveAllTransformations(
     // Write the result back into enrichedDoc so later transformations in this
     // same loop can reference it (e.g. a transformation on "Plant" that reads
     // the already-resolved "Amount").
-    const targetKey = typeof mapping === "object" && mapping.path
-      ? mapping.path
+    const targetKey = typeof mapping === "object" && mapping?.path
+      ? String(mapping.path)
       : placeholder;
 
     enrichedDoc[targetKey] = value;
@@ -196,6 +332,110 @@ function resolveAllTransformations(
   console.log(`[API3] Pass 1 complete. enrichedDoc keys:`, Object.keys(enrichedDoc));
 
   return { resolvedValues, enrichedDoc };
+}
+
+function resolveTokenValue(
+  token: string,
+  resolvedValues: Record<string, string>,
+  source: Record<string, unknown>,
+): string {
+  const normalizedToken = normalizeKey(token);
+
+  for (const [k, v] of Object.entries(resolvedValues)) {
+    if (normalizeKey(k) === normalizedToken) return String(v ?? "");
+  }
+
+  const byPath = resolvePathValue(source, token);
+  if (byPath !== undefined && byPath !== null) return String(byPath);
+
+  const leaf = token.includes(".") ? token.substring(token.lastIndexOf(".") + 1) : token;
+  const byLeaf = resolvePathValue(source, leaf);
+  if (byLeaf !== undefined && byLeaf !== null) return String(byLeaf);
+
+  return "";
+}
+
+function replaceRemainingTemplateTokens(
+  raw: string,
+  resolvedValues: Record<string, string>,
+  source: Record<string, unknown>,
+): string {
+  return raw.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_match, tokenRaw) => {
+    const token = String(tokenRaw ?? "").trim();
+    if (!token) return "";
+
+    // Skip Handlebars control blocks/helpers if they survived to this stage.
+    if (/^(#|\/|!|>)/.test(token) || /^else\b/i.test(token)) {
+      return `{{${token}}}`;
+    }
+
+    const value = resolveTokenValue(token, resolvedValues, source);
+    return value;
+  });
+}
+
+function extractSimpleTemplateTokens(raw: string): string[] {
+  const tokens = new Set<string>();
+  const regex = /\{\{\s*([^{}]+?)\s*\}\}/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(raw)) !== null) {
+    const token = String(match[1] ?? "").trim();
+    if (!token) continue;
+    if (/^(#|\/|!|>)/.test(token)) continue;
+    if (/^else\b/i.test(token)) continue;
+    if (token.startsWith("this.") || token.startsWith("@")) continue;
+    // Skip helper-like expressions: {{helper arg}}.
+    if (/\s/.test(token)) continue;
+    tokens.add(token);
+  }
+
+  return Array.from(tokens);
+}
+
+function setNestedContextValue(context: Record<string, any>, path: string, value: unknown): void {
+  const parts = path.split(".").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return;
+
+  let node: Record<string, any> = context;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (!node[part] || typeof node[part] !== "object" || Array.isArray(node[part])) {
+      node[part] = {};
+    }
+    node = node[part];
+  }
+
+  node[parts[parts.length - 1]] = value;
+}
+
+function getEffectiveSourceDocData(docData: Record<string, unknown>): Record<string, unknown> {
+  const nested = (docData as any)?.d;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return {
+      ...(nested as Record<string, unknown>),
+      ...docData,
+    };
+  }
+  return docData;
+}
+
+function preReplaceNonLoopTokens(
+  raw: string,
+  resolvedValues: Record<string, string>,
+  source: Record<string, unknown>,
+): string {
+  return raw.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, tokenRaw) => {
+    const token = String(tokenRaw ?? "").trim();
+    if (!token) return "";
+    if (/^(#|\/|!|>)/.test(token)) return match;
+    if (/^else\b/i.test(token)) return match;
+    if (token.startsWith("this.") || token.startsWith("@")) return match;
+    if (token.startsWith("items.") || token.startsWith("groups.")) return match;
+    if (/\s/.test(token)) return match;
+
+    return resolveTokenValue(token, resolvedValues, source);
+  });
 }
 
 // ── Template renderer ──────────────────────────────────────────────────────────
@@ -588,6 +828,7 @@ function renderZpl(
   template: LabelMaster,
   docData: Record<string, unknown>,
 ): string {
+  const sourceDocData = getEffectiveSourceDocData(docData);
   const raw = template.zpl_code ?? "";
 
   if (!raw) {
@@ -600,37 +841,24 @@ function renderZpl(
 
   if (template.field_mapping && Object.keys(template.field_mapping).length > 0) {
     // Two-pass: resolve all transformations first, then substitute
-    const { resolvedValues } = resolveAllTransformations(
+    const { resolvedValues, enrichedDoc } = resolveAllTransformations(
       template.field_mapping,
-      docData,
+      sourceDocData,
     );
-    return substituteValues(raw, resolvedValues);
+    const mapped = substituteValues(raw, resolvedValues);
+    return replaceRemainingTemplateTokens(mapped, resolvedValues, enrichedDoc);
   }
 
-  // No field_mapping — fall back to direct key substitution (no transformations)
-  console.log(`[API3] ZPL — no field_mapping, using direct key substitution`);
-  let rendered = raw;
-
-  for (const [key, value] of Object.entries(docData)) {
-    const valueStr = String(value ?? "");
-    const aliases = getKeyAliases(key);
-
-    for (const alias of aliases) {
-      const replacement = replacePlaceholderToken(rendered, alias, valueStr);
-      rendered = replacement.rendered;
-      if (replacement.replaced) {
-        console.log(`[API3]   Direct substituted {${alias}} (from ${key}) → "${valueStr}"`);
-      }
-    }
-  }
-
-  return rendered;
+  // No field_mapping — use one-pass fallback token resolution.
+  console.log(`[API3] ZPL — no field_mapping, using fallback placeholder resolution`);
+  return replaceRemainingTemplateTokens(raw, {}, sourceDocData);
 }
 
 function renderHtml(
   template: LabelMaster,
   docData: Record<string, unknown>,
 ): string {
+  const sourceDocData = getEffectiveSourceDocData(docData);
   let raw = template.html_code ?? "";
 
   if (!raw) {
@@ -642,13 +870,19 @@ function renderHtml(
   console.log(`[API3] HTML render — field_mapping:`, template.field_mapping);
 
   let resolvedValues: Record<string, string> = {};
+  let transformedDocData: Record<string, unknown> = sourceDocData;
   if (template.field_mapping && Object.keys(template.field_mapping).length > 0) {
     const res = resolveAllTransformations(
       template.field_mapping,
-      docData,
+      sourceDocData,
     );
     resolvedValues = res.resolvedValues;
+    transformedDocData = res.enrichedDoc;
   }
+
+  // Resolve straightforward business placeholders before Handlebars to avoid
+  // unknown-path blanking while preserving loop/control tokens.
+  raw = preReplaceNonLoopTokens(raw, resolvedValues, transformedDocData);
 
   // ── Table Loop Engine: pre-process entity-set arrays before Handlebars ─────
   // Extract table_config objects embedded in <table data-table-config="..."> attributes
@@ -660,7 +894,7 @@ function renderHtml(
       : [template.table_config];
     console.log(`[API3] Using table configs from database fallback:`, tableConfigs);
   }
-  let enrichedDocData = docData as Record<string, any>;
+  let enrichedDocData = transformedDocData as Record<string, any>;
   if (tableConfigs.length > 0) {
     raw = injectHandlebarsTableLoops(raw, tableConfigs);
     console.log(`[API3] Injected Handlebars table loops into HTML code`);
@@ -683,18 +917,26 @@ function renderHtml(
     context[normalizeKey(key)] = value;
   }
 
+  // 3. Seed explicit dotted placeholder paths from the template so Handlebars
+  // can resolve values instead of blanking unknown paths.
+  const rawTokens = extractSimpleTemplateTokens(raw);
+  for (const token of rawTokens) {
+    const value = resolveTokenValue(token, resolvedValues, enrichedDocData);
+    setNestedContextValue(context, token, value);
+  }
+
 
   try {
     const templateFn = Handlebars.compile(raw);
     const rendered = templateFn(context);
     console.log(`[API3] HTML rendered successfully using Handlebars`);
-    return rendered;
+    return replaceRemainingTemplateTokens(rendered, resolvedValues, enrichedDocData);
   } catch (compileErr) {
     console.warn(`[API3] Handlebars rendering failed, falling back to regex-based replacement:`, (compileErr as any).message);
 
     if (template.field_mapping && Object.keys(template.field_mapping).length > 0) {
       // HTML templates use {{Placeholder}} syntax
-      return raw.replace(/{{(.*?)}}/g, (_, placeholder) => {
+      const mapped = raw.replace(/{{(.*?)}}/g, (_, placeholder) => {
         const norm = normalizeKey(placeholder);
 
         // Check resolvedValues first (with normalized key), then fall back to
@@ -707,6 +949,7 @@ function renderHtml(
         console.log(`[API3]   HTML replace {{${placeholder}}} → "${value}"`);
         return value;
       });
+      return replaceRemainingTemplateTokens(mapped, resolvedValues, enrichedDocData);
     }
 
     // No field_mapping — normalize docData keys and substitute directly
@@ -720,12 +963,13 @@ function renderHtml(
       }
     }
 
-    return raw.replace(/{{(.*?)}}/g, (_, placeholder) => {
+    const mapped = raw.replace(/{{(.*?)}}/g, (_, placeholder) => {
       const norm = normalizeKey(placeholder);
       const value = normalizedDoc[norm];
       console.log(`[API3]   HTML replace {{${placeholder}}} → ${value}`);
       return value ?? "";
     });
+    return replaceRemainingTemplateTokens(mapped, {}, enrichedDocData);
   }
 }
 
@@ -733,6 +977,7 @@ function renderXdp(
   template: LabelMaster,
   docData: Record<string, unknown>,
 ): string {
+  const sourceDocData = getEffectiveSourceDocData(docData);
   const raw = template.xdp_code ?? "";
 
   if (!raw) {
@@ -745,31 +990,17 @@ function renderXdp(
 
   if (template.field_mapping && Object.keys(template.field_mapping).length > 0) {
     // Two-pass: resolve all transformations first, then substitute
-    const { resolvedValues } = resolveAllTransformations(
+    const { resolvedValues, enrichedDoc } = resolveAllTransformations(
       template.field_mapping,
-      docData,
+      sourceDocData,
     );
-    return substituteValues(raw, resolvedValues);
+    const mapped = substituteValues(raw, resolvedValues);
+    return replaceRemainingTemplateTokens(mapped, resolvedValues, enrichedDoc);
   }
 
-  // No field_mapping — direct key substitution
-  console.log(`[API3] XDP — no field_mapping, using direct key substitution`);
-  let rendered = raw;
-
-  for (const [key, value] of Object.entries(docData)) {
-    const valueStr = String(value ?? "");
-    const aliases = getKeyAliases(key);
-
-    for (const alias of aliases) {
-      const replacement = replacePlaceholderToken(rendered, alias, valueStr);
-      rendered = replacement.rendered;
-      if (replacement.replaced) {
-        console.log(`[API3]   Direct substituted {${alias}} (from ${key}) → "${valueStr}"`);
-      }
-    }
-  }
-
-  return rendered;
+  // No field_mapping — use one-pass fallback token resolution.
+  console.log(`[API3] XDP — no field_mapping, using fallback placeholder resolution`);
+  return replaceRemainingTemplateTokens(raw, {}, sourceDocData);
 }
 
 // ── Printer dispatch functions ─────────────────────────────────────────────────
@@ -811,26 +1042,60 @@ async function sendPdfViaIPP(
   printerUrl: string,
   pdfBuffer: Buffer,
 ): Promise<void> {
-  return Promise.resolve();
-  const ippUrl = printerUrl.includes(":631")
-    ? printerUrl
-    : `http://${printerUrl}:631/ipp/print`;
-
-  const response = await fetch(ippUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Length": String(pdfBuffer.length),
-    },
-    body: new Uint8Array(pdfBuffer),
-    signal: AbortSignal.timeout(30000),
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `IPP printer rejected: ${response.status} ${response.statusText}`,
-    );
+  const trimmed = String(printerUrl ?? "").trim();
+  if (!trimmed) {
+    throw new Error("Printer URL is empty for IPP dispatch");
   }
+
+  let ippUrl = trimmed;
+  if (!/^https?:\/\//i.test(ippUrl)) {
+    ippUrl = `http://${ippUrl}`;
+  }
+
+  const parsed = new URL(ippUrl);
+  if (!parsed.port) parsed.port = "631";
+  if (!parsed.pathname || parsed.pathname === "/") {
+    parsed.pathname = "/ipp/print";
+  }
+  ippUrl = parsed.toString().replace(/^https?:\/\//i, "http://");
+
+  console.log(`[API3] IPP endpoint: ${ippUrl}`);
+
+  const printer = ipp.Printer(ippUrl);
+
+  const msg = {
+    "operation-attributes-tag": {
+      "attributes-charset": "utf-8",
+      "attributes-natural-language": "en",
+      "requesting-user-name": "nxforms",
+      "job-name": `nxforms-${Date.now()}`,
+      "document-format": "application/pdf",
+    },
+    data: pdfBuffer,
+  };
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`IPP request timeout (${ippUrl})`));
+    }, 30000);
+
+    printer.execute("Print-Job", msg, (err: any, res: any) => {
+      clearTimeout(timeout);
+
+      if (err) {
+        reject(new Error(`IPP printer request failed: ${err?.message ?? String(err)}`));
+        return;
+      }
+
+      const status = String(res?.["statusCode"] ?? res?.["status-code"] ?? "");
+      if (status && !status.toLowerCase().startsWith("successful")) {
+        reject(new Error(`IPP printer rejected request: ${status}`));
+        return;
+      }
+
+      resolve();
+    });
+  });
 }
 
 async function sendZPLViaTCP(
@@ -1256,7 +1521,12 @@ export async function newprocessOutputAgent(outputId: string, simulate: boolean,
       [representativePayload, outputId],
     );
 
-    if (printToFile) {
+    if (simulate) {
+      console.info(
+        `[API3] simulate=true — skipping printer dispatch, output saved to DB`,
+      );
+      console.log(`[API3] Output ${outputId} saved to DB (simulate=true)`);
+    } else if (printToFile) {
       console.info(
         `[API3] print_to_file=true — skipping printer dispatch, output saved to DB`,
       );

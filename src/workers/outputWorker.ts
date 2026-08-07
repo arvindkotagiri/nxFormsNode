@@ -497,104 +497,204 @@ export async function processOutputDetermination(eventId: string): Promise<void>
 //   return result.rows;
 // }
 
+type OutputDefinitionField = {
+  name: string;
+  entity: string;
+};
+
+type OutputEvaluationPayload = Record<string, string>;
+
+function toComparable(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+function normalizeKey(key: string): string {
+  return key.trim().toLowerCase();
+}
+
+function getValueByKeyInsensitive(source: Record<string, unknown>, key: string): unknown {
+  const target = normalizeKey(key);
+  for (const [k, v] of Object.entries(source)) {
+    if (normalizeKey(k) === target) return v;
+  }
+  return undefined;
+}
+
+function getBusinessDocument(payloadData: Record<string, unknown>): Record<string, unknown> {
+  if (payloadData.d && typeof payloadData.d === "object" && !Array.isArray(payloadData.d)) {
+    return payloadData.d as Record<string, unknown>;
+  }
+  return payloadData;
+}
+
+function buildEvaluationPayload(
+  businessDocument: Record<string, unknown>,
+  outputFields: OutputDefinitionField[],
+): OutputEvaluationPayload {
+  const out: OutputEvaluationPayload = {};
+
+  for (const field of outputFields) {
+    const fieldName = String(field.name || "").trim();
+    if (!fieldName) continue;
+
+    const entity = String(field.entity || "").trim();
+    const resolved = getValueByKeyInsensitive(businessDocument, fieldName);
+    const value = toComparable(resolved);
+
+    if (!value) continue;
+
+    if (entity) {
+      out[`${entity}.${fieldName}`] = value;
+    }
+    out[fieldName] = value;
+  }
+
+  return out;
+}
+
+function extractConditionValue(
+  conditionKey: string,
+  evaluationPayload: OutputEvaluationPayload,
+  businessDocument: Record<string, unknown>,
+): string {
+  const exact = getValueByKeyInsensitive(evaluationPayload as Record<string, unknown>, conditionKey);
+  if (exact !== undefined) return toComparable(exact);
+
+  const leaf = conditionKey.includes(".")
+    ? conditionKey.substring(conditionKey.lastIndexOf(".") + 1)
+    : conditionKey;
+
+  const byLeaf = getValueByKeyInsensitive(evaluationPayload as Record<string, unknown>, leaf);
+  if (byLeaf !== undefined) return toComparable(byLeaf);
+
+  const fromDoc = getValueByKeyInsensitive(businessDocument, leaf);
+  if (fromDoc !== undefined) return toComparable(fromDoc);
+
+  return "";
+}
+
+function mergeConditionMaps(
+  ...maps: Array<Record<string, string> | null | undefined>
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const map of maps) {
+    if (!map || typeof map !== "object") continue;
+    for (const [key, value] of Object.entries(map)) {
+      const normalized = toComparable(value);
+      if (!normalized) continue;
+      merged[key] = normalized;
+    }
+  }
+  return merged;
+}
+
 async function determineLabels(
-  docData: Record<string, string | null>,
+  context: string,
+  businessDocument: Record<string, unknown>,
+  evaluationPayload: OutputEvaluationPayload,
   simulate: boolean,
-  props: Record<string, any>
+  props: Record<string, any>,
 ): Promise<Array<{ label_id: string; label_name: string; printer: string | null }>> {
   const requestedFormId = String(props?.form_id ?? "").trim();
 
-  if (simulate && requestedFormId) {
+  if (requestedFormId) {
     const result = await pool.query(
       `
       SELECT label_id, label_name
       FROM label_master
       WHERE label_id = $1
+      LIMIT 1
       `,
-      [requestedFormId]
+      [requestedFormId],
     );
 
-    if ((result.rowCount ?? 0) === 0) {
-      console.warn(`[API2] simulate=true with form_id=${requestedFormId}, but no label_master row found. Falling back to rule-based determination.`);
-    } else {
+    if ((result.rowCount ?? 0) > 0) {
       return result.rows;
+    }
+
+    if (simulate) {
+      console.warn(`[API2] simulate=true with form_id=${requestedFormId}, but no label_master row found. Falling back to output condition matching.`);
     }
   }
 
   if (simulate && !requestedFormId) {
-    console.info("[API2] simulate=true and form_id is empty. Using rule-based label determination.");
+    console.info("[API2] simulate=true and form_id is empty. Using output-condition determination.");
   }
 
-  {
-    const {
-      customer,
-      plant,
-      company_code,
-      sales_organization,
-      warehouse,
-      shipping_point,
-      process_type,
-    } = docData;
-
-    const result = await pool.query(
-      `
+  const candidatesResult = await pool.query(
+    `
     SELECT
       lc.label_id,
       lc.label_name,
       pm.name AS printer,
       lc.priority,
-      (
-        CASE WHEN lc.customer IS NOT NULL AND lc.customer = $1 THEN 1 ELSE 0 END +
-        CASE WHEN lc.plant IS NOT NULL AND lc.plant = $2 THEN 1 ELSE 0 END +
-        CASE WHEN lc.company_code IS NOT NULL AND lc.company_code = $3 THEN 1 ELSE 0 END +
-        CASE WHEN lc.sales_organization IS NOT NULL AND lc.sales_organization = $4 THEN 1 ELSE 0 END +
-        CASE WHEN lc.warehouse IS NOT NULL AND lc.warehouse = $5 THEN 1 ELSE 0 END +
-        CASE WHEN lc.shipping_point IS NOT NULL AND lc.shipping_point = $6 THEN 1 ELSE 0 END +
-        CASE WHEN lc.process_type IS NOT NULL AND lc.process_type = $7 THEN 1 ELSE 0 END
-      ) AS exact_matches
+      lc.output_conditions,
+      lc.custom_fields
     FROM label_configs lc
-    LEFT JOIN printer_master pm
-      ON lc.printer = pm.id
+    LEFT JOIN printer_master pm ON lc.printer = pm.id
     WHERE lc.active = true
       AND (lc.valid_from IS NULL OR lc.valid_from <= NOW())
       AND (lc.valid_to IS NULL OR lc.valid_to >= NOW())
-
-      AND (lc.customer IS NULL OR lc.customer = $1)
-      AND NOT (lc.customer IS NOT NULL AND $1 IS NULL)
-
-      AND (lc.plant IS NULL OR lc.plant = $2)
-      AND NOT (lc.plant IS NOT NULL AND $2 IS NULL)
-
-      AND (lc.company_code IS NULL OR lc.company_code = $3)
-      AND NOT (lc.company_code IS NOT NULL AND $3 IS NULL)
-
-      AND (lc.sales_organization IS NULL OR lc.sales_organization = $4)
-      AND NOT (lc.sales_organization IS NOT NULL AND $4 IS NULL)
-
-      AND (lc.warehouse IS NULL OR lc.warehouse = $5)
-      AND NOT (lc.warehouse IS NOT NULL AND $5 IS NULL)
-
-      AND (lc.shipping_point IS NULL OR lc.shipping_point = $6)
-      AND NOT (lc.shipping_point IS NOT NULL AND $6 IS NULL)
-
-      AND (lc.process_type IS NULL OR lc.process_type = $7)
-      AND NOT (lc.process_type IS NOT NULL AND $7 IS NULL)
-
-    ORDER BY exact_matches DESC, lc.priority ASC
+      AND EXISTS (
+        SELECT 1
+        FROM label_master lm
+        WHERE lm.label_id = lc.label_id
+          AND LOWER(lm.context) = LOWER($1)
+      )
+    ORDER BY lc.priority ASC
     `,
-      [
-        customer,
-        plant,
-        company_code,
-        sales_organization,
-        warehouse,
-        shipping_point,
-        process_type,
-      ]
+    [context],
+  );
+
+  const matched: Array<{ label_id: string; label_name: string; printer: string | null; exact_matches: number; priority: number }> = [];
+
+  for (const row of candidatesResult.rows) {
+    const conditions = mergeConditionMaps(
+      (row.output_conditions ?? null) as Record<string, string> | null,
+      (row.custom_fields ?? null) as Record<string, string> | null,
     );
 
-    return result.rows;
+    if (Object.keys(conditions).length === 0) {
+      matched.push({
+        label_id: row.label_id,
+        label_name: row.label_name,
+        printer: row.printer,
+        exact_matches: 0,
+        priority: Number(row.priority ?? 9999),
+      });
+      continue;
+    }
+
+    let isMatch = true;
+    let exactMatches = 0;
+
+    for (const [conditionKey, expected] of Object.entries(conditions)) {
+      const actual = extractConditionValue(conditionKey, evaluationPayload, businessDocument);
+      if (!actual || normalizeKey(actual) !== normalizeKey(expected)) {
+        isMatch = false;
+        break;
+      }
+      exactMatches += 1;
+    }
+
+    if (isMatch) {
+      matched.push({
+        label_id: row.label_id,
+        label_name: row.label_name,
+        printer: row.printer,
+        exact_matches: exactMatches,
+        priority: Number(row.priority ?? 9999),
+      });
+    }
   }
+
+  matched.sort((a, b) => {
+    if (b.exact_matches !== a.exact_matches) return b.exact_matches - a.exact_matches;
+    return a.priority - b.priority;
+  });
+
+  return matched.map(({ label_id, label_name, printer }) => ({ label_id, label_name, printer }));
 }
 
 async function fetchPayloadDataFromAPI(
@@ -607,6 +707,7 @@ async function fetchPayloadDataFromAPI(
     `SELECT
       name,
       endpoint,
+      get_url,
       auth_type,
       auth_url,
       client_id,
@@ -625,7 +726,7 @@ async function fetchPayloadDataFromAPI(
   }
 
   const ctx = ctxRow.rows[0] as ContextConfig;
-  const endpoint = String(ctx.endpoint ?? "").trim();
+  const endpoint = String(ctx.get_url ?? ctx.endpoint ?? "").trim();
 
   if (!endpoint) {
     throw new Error(`Context ${context} is missing endpoint configuration`);
@@ -656,35 +757,10 @@ async function fetchPayloadDataFromAPI(
     {
       ...ctx,
       name: String(ctx.name || context),
+      endpoint,
     },
     entityKey,
   );
-}
-
-function firstNonEmptyString(source: Array<unknown>): string | null {
-  for (const value of source) {
-    if (value === null || value === undefined) continue;
-    const asString = String(value).trim();
-    if (asString) return asString;
-  }
-  return null;
-}
-
-function extractDeterminationInput(payloadData: Record<string, unknown>): Record<string, string | null> {
-  const root = payloadData;
-  const d = payloadData.d && typeof payloadData.d === "object"
-    ? (payloadData.d as Record<string, unknown>)
-    : {};
-
-  return {
-    customer: firstNonEmptyString([root.customer, root.Customer, root.sold_to_party, d.SoldToParty, root.SoldToParty]),
-    plant: firstNonEmptyString([root.plant, root.Plant, d.Plant]),
-    company_code: firstNonEmptyString([root.company_code, root.CompanyCode, d.CompanyCode]),
-    sales_organization: firstNonEmptyString([root.sales_organization, root.SalesOrganization, d.SalesOrganization]),
-    warehouse: firstNonEmptyString([root.warehouse, root.Warehouse, d.Warehouse]),
-    shipping_point: firstNonEmptyString([root.shipping_point, root.ShippingPoint, d.ShippingPoint]),
-    process_type: firstNonEmptyString([root.process_type, root.ProcessType, d.ProcessType, d.SalesOrderType]),
-  };
 }
 
 export async function newprocessOutputDetermination(eventId: string, simulate: boolean, props: any): Promise<void> {
@@ -735,9 +811,34 @@ export async function newprocessOutputDetermination(eventId: string, simulate: b
       return;
     }
 
-    const determinationInput = extractDeterminationInput(payloadData);
+    const businessDocument = getBusinessDocument(payloadData);
 
-    const matchedLabels = await determineLabels(determinationInput, simulate, props);
+    const outputDefResult = await pool.query(
+      `SELECT output_fields
+       FROM api_output_definitions
+       WHERE LOWER(name) = LOWER($1)
+       LIMIT 1`,
+      [context],
+    );
+
+    if ((outputDefResult.rowCount ?? 0) === 0) {
+      await newfinalizeEvent(eventId, "Failed", `No api_output_definitions found for context=${context}`, startTime, 0);
+      return;
+    }
+
+    const outputFields = Array.isArray(outputDefResult.rows[0]?.output_fields)
+      ? outputDefResult.rows[0].output_fields as OutputDefinitionField[]
+      : [];
+
+    if (outputFields.length === 0) {
+      await newfinalizeEvent(eventId, "Failed", `output_fields is empty for context=${context}`, startTime, 0);
+      return;
+    }
+
+    const evaluationPayload = buildEvaluationPayload(businessDocument, outputFields);
+    console.info("[API2] Evaluation payload:", evaluationPayload);
+
+    const matchedLabels = await determineLabels(context, businessDocument, evaluationPayload, simulate, props);
     console.log("here", matchedLabels);
     if (matchedLabels.length === 0) {
       await newfinalizeEvent(eventId, "Failed", "No matching label configurations found", startTime, 0);
