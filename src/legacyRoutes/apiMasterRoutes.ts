@@ -209,6 +209,82 @@ router.get('/output-definition-fields/active', async (_req, res) => {
   }
 });
 
+router.post('/simulate-query', async (req, res) => {
+  const data = req.body || {};
+  const queryUrl = data.url;
+  const token_url = data.tokenUrl;
+  const client_id = data.clientId;
+  const client_secret = data.clientSecret;
+  const auth_type = data.authType || 'None';
+  const username = data.username;
+  const password = data.password;
+
+  if (!queryUrl) {
+    return res.status(400).json({ status: "error", message: "Query URL is required" });
+  }
+
+  try {
+    const headers = {};
+
+    // Fetch OAuth token if OAuth details are provided
+    if (auth_type === 'OAuth2' && token_url && client_id && client_secret) {
+      console.log(`[SIMULATE_QUERY] Requesting token from ${token_url}`);
+      try {
+        const tokenParams = new URLSearchParams();
+        tokenParams.append('grant_type', 'client_credentials');
+        tokenParams.append('client_id', client_id);
+        tokenParams.append('client_secret', client_secret);
+
+        const basicAuth = Buffer.from(`${client_id}:${client_secret}`).toString('base64');
+
+        const authResponse = await axios.post(token_url, tokenParams.toString(), {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': `Basic ${basicAuth}`
+          },
+          httpsAgent,
+          timeout: 10000
+        });
+
+        const tokenData = authResponse.data || {};
+        const accessToken = tokenData.access_token;
+        if (accessToken) {
+          headers['Authorization'] = `Bearer ${accessToken}`;
+        }
+      } catch (authErr) {
+        console.error("[SIMULATE_QUERY] OAuth exception:", authErr.message);
+        return res.status(401).json({
+          status: "error",
+          message: `OAuth Authentication failed: ${authErr.message}`
+        });
+      }
+    } else if (auth_type === 'Basic' && username && password) {
+      console.log(`[SIMULATE_QUERY] Using Basic Auth for ${username}`);
+      const basicAuth = Buffer.from(`${username}:${password}`).toString('base64');
+      headers['Authorization'] = `Basic ${basicAuth}`;
+    }
+
+    console.log(`[SIMULATE_QUERY] Fetching OData query: ${queryUrl}`);
+    const response = await axios.get(queryUrl, {
+      headers,
+      httpsAgent,
+      timeout: 10000
+    });
+
+    res.status(200).json({ status: "success", data: response.data });
+  } catch (err) {
+    const status = err.response ? err.response.status : 500;
+    const errorMsg = err.response && err.response.data && err.response.data.error 
+      ? err.response.data.error.message 
+      : err.message;
+    console.error(`[SIMULATE_QUERY] Failed. Status: ${status}, Message: ${errorMsg}`);
+    res.status(status).json({
+      status: "error",
+      message: `Failed to simulate query: ${errorMsg}`
+    });
+  }
+});
+
 router.post('/fetch-metadata', async (req, res) => {
   const data = req.body || {};
   const url = data.url;
