@@ -332,12 +332,10 @@ router.post('/fetch-metadata', async (req, res) => {
 
     const xmlString = xmlText.toString();
     const doc = new DOMParser().parseFromString(xmlString, 'text/xml');
-    const entities = [];
-
-    // Namespace-agnostic element selection: we check localName or getElementsByTagNameNS if needed, 
-    // but xmldom's getElementsByTagName works on tag name directly if we don't bind namespaces,
-    // or we can iterate over all elements.
-    const allEntityTypes = doc.getElementsByTagNameNS('*', 'EntityType');
+    
+    // 1. Parse all EntityTypes to retrieve their property fields
+    const entityTypesMap = {};
+    const allEntityTypes = doc.getElementsByTagNameNS ? doc.getElementsByTagNameNS('*', 'EntityType') : doc.getElementsByTagName('EntityType');
     const entityTypesList = allEntityTypes.length > 0 ? allEntityTypes : doc.getElementsByTagName('EntityType');
 
     for (let i = 0; i < entityTypesList.length; i++) {
@@ -391,10 +389,42 @@ router.post('/fetch-metadata', async (req, res) => {
         }
       }
 
+      entityTypesMap[name] = { fields, navigation: navProps };
+    }
+
+    // 2. Parse all EntitySets and map them to fields & extract NavigationPropertyBindings
+    const entities = [];
+    const allEntitySets = doc.getElementsByTagNameNS ? doc.getElementsByTagNameNS('*', 'EntitySet') : doc.getElementsByTagName('EntitySet');
+    const entitySetsList = allEntitySets.length > 0 ? allEntitySets : doc.getElementsByTagName('EntitySet');
+
+    for (let i = 0; i < entitySetsList.length; i++) {
+      const entitySet = entitySetsList[i];
+      const name = entitySet.getAttribute('Name');
+      const entityTypeAttr = entitySet.getAttribute('EntityType') || "";
+      const entityTypeName = entityTypeAttr.split('.').pop();
+
+      // Resolve fields and navigation from matched EntityType
+      const resolved = entityTypesMap[entityTypeName] || { fields: [], navigation: [] };
+
+      // Parse NavigationPropertyBindings inside this EntitySet
+      const navigationBindings = [];
+      const bindingElements = entitySet.getElementsByTagNameNS ? entitySet.getElementsByTagNameNS('*', 'NavigationPropertyBinding') : entitySet.getElementsByTagName('NavigationPropertyBinding');
+      for (let j = 0; j < bindingElements.length; j++) {
+        const pathAttr = bindingElements[j].getAttribute('Path');
+        const targetAttr = bindingElements[j].getAttribute('Target');
+        if (pathAttr && targetAttr) {
+          navigationBindings.push({
+            path: pathAttr,
+            target: targetAttr
+          });
+        }
+      }
+
       entities.push({
         name,
-        fields,
-        navigation: navProps
+        fields: resolved.fields,
+        navigation: resolved.navigation,
+        navigationBindings
       });
     }
 
