@@ -68,9 +68,9 @@ router.post('/catalog', async (req, res) => {
     const insertQuery = `
       INSERT INTO contexts (
         name, endpoint, auth_type, auth_url, client_id, client_secret,
-        fields, entities, username, password, application, environment, client
+        fields, entities, username, password, application, environment, client, get_url
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING id;
     `;
 
@@ -88,6 +88,7 @@ router.post('/catalog', async (req, res) => {
       data.application || null,
       data.environment || null,
       (data.client !== undefined && data.client !== '') ? data.client : null,
+      data.get_url || null,
     ];
 
     const result = await pool.query(insertQuery, values);
@@ -115,8 +116,9 @@ router.put('/catalog/:api_id', async (req, res) => {
       UPDATE contexts
       SET
         name = $1, endpoint = $2, auth_type = $3, auth_url = $4, client_id = $5, client_secret = $6,
-        fields = $7, entities = $8, username = $9, password = $10, application = $11, environment = $12, client = $13
-      WHERE id = $14
+        fields = $7, entities = $8, username = $9, password = $10, application = $11, environment = $12, client = $13,
+        get_url = $14
+      WHERE id = $15
     `;
 
     const values = [
@@ -133,6 +135,7 @@ router.put('/catalog/:api_id', async (req, res) => {
       data.application || null,
       data.environment || null,
       (data.client !== undefined && data.client !== '') ? data.client : null,
+      data.get_url || null,
       api_id,
     ];
 

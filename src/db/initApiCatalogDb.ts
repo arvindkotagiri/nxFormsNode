@@ -206,6 +206,11 @@ export async function initApiCatalogDb(): Promise<void> {
     `);
 
     await client.query(`
+      ALTER TABLE contexts
+      ADD COLUMN IF NOT EXISTS get_url TEXT;
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS api_output_definitions (
         id SERIAL PRIMARY KEY,
         context_id INTEGER UNIQUE REFERENCES contexts(id) ON DELETE CASCADE,
