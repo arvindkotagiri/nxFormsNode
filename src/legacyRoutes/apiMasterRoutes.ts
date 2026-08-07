@@ -268,7 +268,7 @@ router.post('/simulate-query', async (req, res) => {
     const response = await axios.get(queryUrl, {
       headers,
       httpsAgent,
-      timeout: 10000
+      timeout: 60000
     });
 
     res.status(200).json({ status: "success", data: response.data });
