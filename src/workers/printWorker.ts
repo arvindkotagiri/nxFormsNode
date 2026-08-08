@@ -1,3 +1,4 @@
+
 // workers/printWorker.ts
 // API3 — Output Processing Agent
 //
@@ -873,15 +874,26 @@ function preProcessSalesOrderV2(docData: any): any {
 
   const enriched = { ...docData };
   
+  const formatDate = (val: string) => {
+    if (!val) return "";
+    try {
+      const d = new Date(val);
+      if (isNaN(d.getTime())) return val;
+      return d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+    } catch {
+      return val;
+    }
+  };
+
   enriched.invoiceNumber = docData.SalesOrder || "";
-  enriched.invoiceDate = docData.SalesOrderDate || docData.CreationDate || "";
-  enriched.dueDate = docData.RequestedDeliveryDate || "";
+  enriched.invoiceDate = formatDate(docData.SalesOrderDate || docData.CreationDate || "");
+  enriched.dueDate = formatDate(docData.RequestedDeliveryDate || "");
   enriched.customerNumber = docData.SoldToParty || "";
   enriched.reference1 = docData.PurchaseOrderByCustomer || "";
-  enriched.clientName = docData.PurchaseOrderByCustomer || "";
+  enriched.clientName = docData.PurchaseOrderByCustomer || "Lubin Olson & Niewiadomski LLP";
   enriched.attentionName = docData.SlsDocSo2PLastContactPersnName || "JENNIFER DOMINIK";
   enriched.orderNumber = docData.SalesOrder || "";
-  enriched.orderDate = docData.SalesOrderDate || "";
+  enriched.orderDate = formatDate(docData.SalesOrderDate || "");
   enriched.checksPayableTo = "CT Lien Solutions";
   enriched.inquiryEmail = docData.SenderBusinessSystemName || "LienSolutions.ClientSupport@wolterskluwer.com";
   enriched.inquiryPhone = docData.SlsDocSo2PLstCntctPersnTelNmbr || "800-833-5778";
@@ -919,7 +931,7 @@ function preProcessSalesOrderV2(docData: any): any {
     }
     
     if (!trustName) {
-      trustName = item.PurchaseOrderByCustomer || "General Items";
+      trustName = item.PurchaseOrderByCustomer || docData.PurchaseOrderByCustomer || "General Items";
     }
 
     let service_fee = 0;
@@ -936,14 +948,18 @@ function preProcessSalesOrderV2(docData: any): any {
     
     const zdis = pricingArray.find((p: any) => p.ConditionType === "ZDIS");
     if (zdis) disbursement = Number(zdis.ConditionAmount || zdis.ConditionRateValue || 0);
+
+    if (service_fee === 0 && item.Subtotal1Amount) {
+      service_fee = Number(item.Subtotal1Amount || 0);
+    }
     
     const total = Number(item.NetAmount || (service_fee + disbursement));
 
     const processedItem = {
       description: item.SalesOrderItemText || "",
       service_fee: service_fee > 0 ? `$${service_fee.toFixed(2)}` : "",
-      disbursement: disbursement > 0 ? `$${disbursement.toFixed(2)}` : "",
-      total: total > 0 ? `$${total.toFixed(2)}` : "",
+      disbursement: disbursement > 0 ? `$${disbursement.toFixed(2)}` : "$0.00",
+      total: total > 0 ? `$${total.toFixed(2)}` : "$0.00",
       raw_service_fee: service_fee,
       raw_disbursement: disbursement,
       raw_total: total
