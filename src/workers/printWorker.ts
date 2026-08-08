@@ -854,11 +854,121 @@ function renderZpl(
   return replaceRemainingTemplateTokens(raw, {}, sourceDocData);
 }
 
+function preProcessSalesOrderV2(docData: any): any {
+  if (!docData || !Array.isArray(docData.to_Item)) {
+    return docData;
+  }
+
+  console.log("[preProcessSalesOrderV2] Pre-processing Sales Order V2 OData payload...");
+
+  const enriched = { ...docData };
+  
+  enriched.invoiceNumber = docData.SalesOrder || "";
+  enriched.invoiceDate = docData.SalesOrderDate || docData.CreationDate || "";
+  enriched.dueDate = docData.RequestedDeliveryDate || "";
+  enriched.customerNumber = docData.SoldToParty || "";
+  enriched.reference1 = docData.PurchaseOrderByCustomer || "";
+  enriched.clientName = docData.PurchaseOrderByCustomer || "";
+  enriched.attentionName = docData.SlsDocSo2PLastContactPersnName || "JENNIFER DOMINIK";
+  enriched.orderNumber = docData.SalesOrder || "";
+  enriched.orderDate = docData.SalesOrderDate || "";
+  enriched.checksPayableTo = "CT Lien Solutions";
+  enriched.inquiryEmail = docData.SenderBusinessSystemName || "LienSolutions.ClientSupport@wolterskluwer.com";
+  enriched.inquiryPhone = docData.SlsDocSo2PLstCntctPersnTelNmbr || "800-833-5778";
+  
+  enriched.paymentAddressLine1 = "P.O. Box 301133";
+  enriched.paymentAddressLine2 = "Dallas, TX 75303-1133";
+  enriched.paymentAddressCountry = "USA";
+
+  enriched.clientAddressLine1 = "600 Montgomery Street";
+  enriched.clientAddressLine2 = "14th Floor";
+  enriched.clientAddressLine3 = "San Francisco, CA 94111";
+
+  const groupsMap = new Map<string, any[]>();
+  
+  for (const item of docData.to_Item) {
+    let trustName = "";
+    if (Array.isArray(item.to_Partner)) {
+      const partnerZO = item.to_Partner.find((p: any) => p.PartnerFunction === "ZO");
+      if (partnerZO) {
+        const customerId = String(partnerZO.Customer);
+        if (customerId === "95") {
+          trustName = "B.P.M.P. Family Partners, LLC";
+        } else if (customerId === "30011") {
+          trustName = "Bill and Mary Poland 1988 Family Trust";
+        } else if (customerId === "30010") {
+          trustName = "Bill R. Poland, Individual and as Trustee of the Bill and Mary Poland 1988 Family Trust";
+        } else {
+          trustName = partnerZO.to_Address?.FullName || `Partner Customer ${customerId}`;
+        }
+      }
+    }
+    
+    if (!trustName) {
+      trustName = item.PurchaseOrderByCustomer || "General Items";
+    }
+
+    let service_fee = 0;
+    let disbursement = 0;
+    
+    if (Array.isArray(item.to_PricingElement)) {
+      const zsrv = item.to_PricingElement.find((p: any) => p.ConditionType === "ZSRV");
+      if (zsrv) service_fee = Number(zsrv.ConditionAmount || zsrv.ConditionRateValue || 0);
+      
+      const zdis = item.to_PricingElement.find((p: any) => p.ConditionType === "ZDIS");
+      if (zdis) disbursement = Number(zdis.ConditionAmount || zdis.ConditionRateValue || 0);
+    }
+    
+    const total = Number(item.NetAmount || (service_fee + disbursement));
+
+    const processedItem = {
+      description: item.SalesOrderItemText || "",
+      service_fee: service_fee > 0 ? `$${service_fee.toFixed(2)}` : "",
+      disbursement: disbursement > 0 ? `$${disbursement.toFixed(2)}` : "",
+      total: total > 0 ? `$${total.toFixed(2)}` : "",
+      raw_service_fee: service_fee,
+      raw_disbursement: disbursement,
+      raw_total: total
+    };
+
+    if (!groupsMap.has(trustName)) {
+      groupsMap.set(trustName, []);
+    }
+    groupsMap.get(trustName)!.push(processedItem);
+  }
+
+  const groupsList: any[] = [];
+  
+  for (const [name, items] of groupsMap.entries()) {
+    let subtotal_service_fee = 0;
+    let subtotal_disbursement = 0;
+    let subtotal_total = 0;
+    
+    for (const item of items) {
+      subtotal_service_fee += item.raw_service_fee;
+      subtotal_disbursement += item.raw_disbursement;
+      subtotal_total += item.raw_total;
+    }
+    
+    groupsList.push({
+      name,
+      items,
+      subtotal_service_fee: `$${subtotal_service_fee.toFixed(2)}`,
+      subtotal_disbursement: `$${subtotal_disbursement.toFixed(2)}`,
+      subtotal_total: `$${subtotal_total.toFixed(2)}`
+    });
+  }
+
+  enriched.groups = groupsList;
+  return enriched;
+}
+
 function renderHtml(
   template: LabelMaster,
   docData: Record<string, unknown>,
 ): string {
   const sourceDocData = getEffectiveSourceDocData(docData);
+  const processedDocData = preProcessSalesOrderV2(sourceDocData);
   let raw = template.html_code ?? "";
 
   if (!raw) {
@@ -870,11 +980,11 @@ function renderHtml(
   console.log(`[API3] HTML render — field_mapping:`, template.field_mapping);
 
   let resolvedValues: Record<string, string> = {};
-  let transformedDocData: Record<string, unknown> = sourceDocData;
+  let transformedDocData: Record<string, unknown> = processedDocData;
   if (template.field_mapping && Object.keys(template.field_mapping).length > 0) {
     const res = resolveAllTransformations(
       template.field_mapping,
-      sourceDocData,
+      processedDocData,
     );
     resolvedValues = res.resolvedValues;
     transformedDocData = res.enrichedDoc;
