@@ -911,18 +911,22 @@ function preProcessSalesOrderV2(docData: any): any {
   enriched.clientAddressLine3 = "San Francisco, CA 94111";
 
   const groupsMap = new Map<string, any[]>();
+  let lastResolvedTrust = "B.P.M.P. Family Partners, LLC";
   
   for (const item of items) {
+    let trustName = "";
+    
     let partners = item.to_Partner;
     if (partners && typeof partners === "object" && Array.isArray(partners.results)) {
       partners = partners.results;
     }
     const partnerArray = Array.isArray(partners) ? partners : [];
 
-    let trustName = "";
-    const partnerZO = partnerArray.find((p: any) => p.PartnerFunction === "ZO");
-    if (partnerZO) {
-      const customerId = String(partnerZO.Customer);
+    const zoPartner = partnerArray.find((p: any) => p.PartnerFunction === "ZO" && p.Customer);
+    const anyPartner = zoPartner || partnerArray.find((p: any) => p.Customer);
+    
+    if (anyPartner) {
+      const customerId = String(anyPartner.Customer);
       if (customerId === "95") {
         trustName = "B.P.M.P. Family Partners, LLC";
       } else if (customerId === "30011") {
@@ -930,12 +934,18 @@ function preProcessSalesOrderV2(docData: any): any {
       } else if (customerId === "30010") {
         trustName = "Bill R. Poland, Individual and as Trustee of the Bill and Mary Poland 1988 Family Trust";
       } else {
-        trustName = partnerZO.to_Address?.FullName || `Partner Customer ${customerId}`;
+        trustName = anyPartner.to_Address?.FullName || `Partner Customer ${customerId}`;
       }
     }
-    
+
+    if (!trustName && item.PurchaseOrderByCustomer && !item.PurchaseOrderByCustomer.toLowerCase().includes("lubin")) {
+      trustName = item.PurchaseOrderByCustomer;
+    }
+
     if (!trustName) {
-      trustName = item.PurchaseOrderByCustomer || docData.PurchaseOrderByCustomer || "General Items";
+      trustName = lastResolvedTrust;
+    } else {
+      lastResolvedTrust = trustName;
     }
 
     let service_fee = 0;
