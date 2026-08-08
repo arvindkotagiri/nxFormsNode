@@ -1138,9 +1138,9 @@ export async function htmlToPdf(htmlContent: string): Promise<Buffer> {
   try {
     await page.setContent(htmlContent, { waitUntil: "networkidle0" });
     const pdfData = await page.pdf({
-      format: "A4",
+      format: "letter",
       printBackground: true,
-      margin: { top: "10mm", right: "10mm", bottom: "10mm", left: "10mm" },
+      margin: { top: "0px", right: "0px", bottom: "0px", left: "0px" },
     });
     return Buffer.from(pdfData);
   } finally {
