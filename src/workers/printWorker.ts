@@ -433,6 +433,7 @@ function preReplaceNonLoopTokens(
     if (/^else\b/i.test(token)) return match;
     if (token.startsWith("this.") || token.startsWith("@")) return match;
     if (token.startsWith("items.") || token.startsWith("groups.")) return match;
+    if (token === "name" || token === "description" || token === "service_fee" || token === "disbursement" || token === "total" || token.startsWith("subtotal_")) return match;
     if (/\s/.test(token)) return match;
 
     return resolveTokenValue(token, resolvedValues, source);
