@@ -532,6 +532,10 @@ function injectHandlebarsTableLoops(html: string, tableConfigs: TableLoopConfig[
     let replaced = false;
 
     const wrapTbody = (tbodyHtml: string): string => {
+      if (tbodyHtml.includes("{{#each") && tbodyHtml.includes("{{/each}}")) {
+        return tbodyHtml;
+      }
+
       let cleanBody = tbodyHtml.replace(/\{\{\s*#each[^}]*\}\}/gi, '').replace(/\{\{\s*\/each\s*\}\}/gi, '');
 
       if (cfg.innerEntitySetKey) {
@@ -547,7 +551,7 @@ function injectHandlebarsTableLoops(html: string, tableConfigs: TableLoopConfig[
 
         const isItemRow = (rowHtml: string): boolean => {
           const lower = rowHtml.toLowerCase();
-          if (lower.includes('group-header') || lower.includes('group_header') || lower.includes('class="group"')) return false;
+          if (lower.includes('group-header') || lower.includes('group_header') || lower.includes('group-name') || lower.includes('group_name') || lower.includes('class="group"')) return false;
           if (lower.includes('subtotal') || lower.includes('total-row') || lower.includes('total_row')) return false;
           if (lower.includes('item-row') || lower.includes('row-item') || lower.includes('item_row') || lower.includes('class="item"')) return true;
           if (lower.includes('subtotal_')) return false;
