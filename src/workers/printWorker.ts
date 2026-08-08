@@ -855,7 +855,17 @@ function renderZpl(
 }
 
 function preProcessSalesOrderV2(docData: any): any {
-  if (!docData || !Array.isArray(docData.to_Item)) {
+  if (!docData) {
+    return docData;
+  }
+
+  let items = docData.to_Item;
+  if (items && typeof items === "object" && Array.isArray(items.results)) {
+    items = items.results;
+  }
+
+  if (!Array.isArray(items)) {
+    console.log("[preProcessSalesOrderV2] to_Item is not an array or results wrapper. Skipping preprocess.");
     return docData;
   }
 
@@ -886,21 +896,25 @@ function preProcessSalesOrderV2(docData: any): any {
 
   const groupsMap = new Map<string, any[]>();
   
-  for (const item of docData.to_Item) {
+  for (const item of items) {
+    let partners = item.to_Partner;
+    if (partners && typeof partners === "object" && Array.isArray(partners.results)) {
+      partners = partners.results;
+    }
+    const partnerArray = Array.isArray(partners) ? partners : [];
+
     let trustName = "";
-    if (Array.isArray(item.to_Partner)) {
-      const partnerZO = item.to_Partner.find((p: any) => p.PartnerFunction === "ZO");
-      if (partnerZO) {
-        const customerId = String(partnerZO.Customer);
-        if (customerId === "95") {
-          trustName = "B.P.M.P. Family Partners, LLC";
-        } else if (customerId === "30011") {
-          trustName = "Bill and Mary Poland 1988 Family Trust";
-        } else if (customerId === "30010") {
-          trustName = "Bill R. Poland, Individual and as Trustee of the Bill and Mary Poland 1988 Family Trust";
-        } else {
-          trustName = partnerZO.to_Address?.FullName || `Partner Customer ${customerId}`;
-        }
+    const partnerZO = partnerArray.find((p: any) => p.PartnerFunction === "ZO");
+    if (partnerZO) {
+      const customerId = String(partnerZO.Customer);
+      if (customerId === "95") {
+        trustName = "B.P.M.P. Family Partners, LLC";
+      } else if (customerId === "30011") {
+        trustName = "Bill and Mary Poland 1988 Family Trust";
+      } else if (customerId === "30010") {
+        trustName = "Bill R. Poland, Individual and as Trustee of the Bill and Mary Poland 1988 Family Trust";
+      } else {
+        trustName = partnerZO.to_Address?.FullName || `Partner Customer ${customerId}`;
       }
     }
     
@@ -911,13 +925,17 @@ function preProcessSalesOrderV2(docData: any): any {
     let service_fee = 0;
     let disbursement = 0;
     
-    if (Array.isArray(item.to_PricingElement)) {
-      const zsrv = item.to_PricingElement.find((p: any) => p.ConditionType === "ZSRV");
-      if (zsrv) service_fee = Number(zsrv.ConditionAmount || zsrv.ConditionRateValue || 0);
-      
-      const zdis = item.to_PricingElement.find((p: any) => p.ConditionType === "ZDIS");
-      if (zdis) disbursement = Number(zdis.ConditionAmount || zdis.ConditionRateValue || 0);
+    let pricing = item.to_PricingElement;
+    if (pricing && typeof pricing === "object" && Array.isArray(pricing.results)) {
+      pricing = pricing.results;
     }
+    const pricingArray = Array.isArray(pricing) ? pricing : [];
+
+    const zsrv = pricingArray.find((p: any) => p.ConditionType === "ZSRV");
+    if (zsrv) service_fee = Number(zsrv.ConditionAmount || zsrv.ConditionRateValue || 0);
+    
+    const zdis = pricingArray.find((p: any) => p.ConditionType === "ZDIS");
+    if (zdis) disbursement = Number(zdis.ConditionAmount || zdis.ConditionRateValue || 0);
     
     const total = Number(item.NetAmount || (service_fee + disbursement));
 
