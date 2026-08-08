@@ -1,14 +1,3 @@
-# Stage 1: Build
-FROM node:18-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-RUN npm ci
-COPY . .
-RUN npm run build
-RUN npm prune --production
-
-# Stage 2: Production
 FROM node:18-slim
 WORKDIR /app
 
@@ -21,8 +10,13 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV NODE_ENV=production
 
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
+COPY package*.json ./
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+RUN npm ci
+
+COPY . .
+RUN npm run build
+RUN npm prune --production
 
 EXPOSE 4000
 CMD ["node", "dist/server.js"]
