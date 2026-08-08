@@ -137,11 +137,12 @@ router.post("/trigger", async (req, res) => {
       updated_by: triggered_by,
     });
 
-    await pool.query(
+    const insertResult = await pool.query(
       `INSERT INTO events 
         (event_id, source, context, entity_key, event_type, triggered_by, print_to_file, status, event_timestamp, outputs,
          created_by, created_on, updated_by, updated_on, encrypted_payload) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', NOW(), 0, $8, NOW(), $9, NOW(), $10)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', NOW(), 0, $8, NOW(), $9, NOW(), $10)
+       RETURNING event_number::text AS event_number`,
       [
         eventId,
         source_system,
@@ -156,13 +157,15 @@ router.post("/trigger", async (req, res) => {
       ]
     );
 
+    const eventNumber = insertResult.rows[0]?.event_number;
+
     // Trigger API 2 asynchronously 
     newprocessOutputDetermination(eventId, simulate, props).catch(err => {
       console.error(`Background worker failed for ${eventId}:`, err);
     });
 
     res.status(202).json({
-      event_id: eventId,
+      event_number: eventNumber,
       status: "Accepted"
     });
 

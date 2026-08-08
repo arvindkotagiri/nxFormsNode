@@ -13,11 +13,157 @@ import net from "net";
 import puppeteer, { Browser } from "puppeteer";
 import * as TF from "../helper/transformations";
 import Handlebars from "handlebars";
+import axios from "axios";
 const ipp = require("ipp");
 
 const MAX_RETRIES = Number(process.env.MAX_RETRIES ?? 3);
 
 let browserInstance: Browser | null = null;
+
+type AccessTokenCache = {
+  token: string;
+  expiresAt: number;
+};
+
+let readAddressTokenCache: AccessTokenCache | null = null;
+
+const READ_ADDRESS_EXECUTE_URL =
+  process.env.READ_ADDRESS_EXECUTE_URL ??
+  "https://mygo-consulting-inc-mygo-bas-4e8bz4sk-mygo-bas-generic-37fbdc83.cfapps.us10-001.hana.ondemand.com/integration/execute";
+const READ_ADDRESS_TOKEN_URL =
+  process.env.READ_ADDRESS_TOKEN_URL ??
+  "https://mygo-bas-4e8bz4sk.authentication.us10.hana.ondemand.com/oauth/token";
+const READ_ADDRESS_CLIENT_ID =
+  process.env.READ_ADDRESS_CLIENT_ID ?? "sb-generic-fm-cap-Mygo_BAS!t212186";
+const READ_ADDRESS_CLIENT_SECRET =
+  process.env.READ_ADDRESS_CLIENT_SECRET ?? "aa3f0c66-42a9-458f-b68c-08e8b93b5dff$CF1-9CO6XJGQZA3x9fqOPmBzJXKX_t2B_F8RPLGMNMQ=";
+const READ_ADDRESS_FUNCTION_MODULE =
+  process.env.READ_ADDRESS_FUNCTION_MODULE ?? "READ_ADDRESS";
+const READ_ADDRESS_PARAMETER_KEY =
+  process.env.READ_ADDRESS_PARAMETER_KEY ?? "address_number";
+
+function isExpiredToken(cache: AccessTokenCache | null): boolean {
+  if (!cache) return true;
+  return Date.now() >= cache.expiresAt;
+}
+
+async function fetchReadAddressToken(): Promise<string> {
+  if (!isExpiredToken(readAddressTokenCache)) {
+    return readAddressTokenCache!.token;
+  }
+
+  const basicAuth = Buffer.from(
+    `${READ_ADDRESS_CLIENT_ID}:${READ_ADDRESS_CLIENT_SECRET}`,
+  ).toString("base64");
+  const params = new URLSearchParams();
+  params.set("grant_type", "client_credentials");
+
+  const tokenResponse = await axios.post(
+    READ_ADDRESS_TOKEN_URL,
+    params.toString(),
+    {
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      timeout: 15000,
+    },
+  );
+
+  const token = String(tokenResponse.data?.access_token ?? "").trim();
+  if (!token) {
+    throw new Error("Read_Address token response missing access_token");
+  }
+
+  const expiresInSeconds = Number(tokenResponse.data?.expires_in ?? 300);
+  readAddressTokenCache = {
+    token,
+    expiresAt: Date.now() + Math.max(60, expiresInSeconds - 30) * 1000,
+  };
+
+  return token;
+}
+
+function extractAddressValue(payload: unknown): string | undefined {
+  if (payload == null) return undefined;
+  if (typeof payload === "string") {
+    const trimmed = payload.trim();
+    return trimmed ? trimmed : undefined;
+  }
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const nested = extractAddressValue(item);
+      if (nested) return nested;
+    }
+    return undefined;
+  }
+  if (typeof payload !== "object") return undefined;
+
+  const row = payload as Record<string, unknown>;
+  const exactCandidates = [
+    "address",
+    "Address",
+    "full_address",
+    "fullAddress",
+    "formatted_address",
+    "formattedAddress",
+  ];
+
+  for (const key of exactCandidates) {
+    const val = row[key];
+    if (typeof val === "string" && val.trim()) return val.trim();
+  }
+
+  for (const [key, value] of Object.entries(row)) {
+    const lowered = key.toLowerCase();
+    if (lowered.includes("address") && !lowered.includes("number")) {
+      if (typeof value === "string" && value.trim()) {
+        return value.trim();
+      }
+    }
+  }
+
+  for (const value of Object.values(row)) {
+    const nested = extractAddressValue(value);
+    if (nested) return nested;
+  }
+
+  return undefined;
+}
+
+async function executeReadAddressLookup(addressNumber: string): Promise<string> {
+  const normalized = String(addressNumber ?? "").trim();
+  if (!normalized) return "";
+
+  try {
+    const token = await fetchReadAddressToken();
+    const response = await axios.post(
+      READ_ADDRESS_EXECUTE_URL,
+      {
+        functionModule: READ_ADDRESS_FUNCTION_MODULE,
+        parameters: {
+          [READ_ADDRESS_PARAMETER_KEY]: normalized,
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        timeout: 20000,
+      },
+    );
+
+    const resolved = extractAddressValue(response.data);
+    return resolved ?? normalized;
+  } catch (error: any) {
+    console.warn(
+      `[API3] Read_Address lookup failed for "${normalized}": ${error?.message ?? String(error)}`,
+    );
+    return normalized;
+  }
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -161,7 +307,7 @@ function resolvePathValue(source: any, path: string): any {
 }
 
 // ── Apply transformations ──────────────────────────────────────────────────────────
-function applyTransformations(
+async function applyTransformations(
   source: Record<string, any>,
   mapping: any
 ) {
@@ -190,6 +336,11 @@ function applyTransformations(
   }
 
   for (const step of mapping.transformations) {
+
+    if (step.type === "Read_Address") {
+      value = await executeReadAddressLookup(String(value ?? ""));
+      continue;
+    }
 
     const fn = (TF as any)[step.type];
 
@@ -229,9 +380,9 @@ function applyTransformations(
           }
         }
 
-        value = fn(tempSource, sourceField, operand);
+        value = await Promise.resolve(fn(tempSource, sourceField, operand));
       } else {
-        value = fn(tempSource, sourceField);
+        value = await Promise.resolve(fn(tempSource, sourceField));
       }
 
     } catch (err) {
@@ -297,10 +448,10 @@ function executeIfElse(source: any, conditions: any[]) {
 //   enrichedDoc    — original docData + any new keys written by transformations
 //                    (useful for debugging / logging)
 
-function resolveAllTransformations(
+async function resolveAllTransformations(
   fieldMapping: Record<string, any>,
   docData: Record<string, unknown>,
-): { resolvedValues: Record<string, string>; enrichedDoc: Record<string, unknown> } {
+): Promise<{ resolvedValues: Record<string, string>; enrichedDoc: Record<string, unknown> }> {
 
   // Start with a mutable copy of docData so transformations that write new
   // fields are visible to subsequent transformations in the same pass.
@@ -310,7 +461,7 @@ function resolveAllTransformations(
   console.log(`[API3] Pass 1 — resolving all transformations`);
 
   for (const [placeholder, mapping] of Object.entries(fieldMapping)) {
-    const value = applyTransformations(enrichedDoc, mapping);
+    const value = await applyTransformations(enrichedDoc, mapping);
     const valueStr = String(value ?? "");
 
     // Write the result back into enrichedDoc so later transformations in this
@@ -824,10 +975,10 @@ function extractTableConfigs(htmlCode: string): TableLoopConfig[] {
 
 
 
-function renderZpl(
+async function renderZpl(
   template: LabelMaster,
   docData: Record<string, unknown>,
-): string {
+): Promise<string> {
   const sourceDocData = getEffectiveSourceDocData(docData);
   const raw = template.zpl_code ?? "";
 
@@ -841,7 +992,7 @@ function renderZpl(
 
   if (template.field_mapping && Object.keys(template.field_mapping).length > 0) {
     // Two-pass: resolve all transformations first, then substitute
-    const { resolvedValues, enrichedDoc } = resolveAllTransformations(
+    const { resolvedValues, enrichedDoc } = await resolveAllTransformations(
       template.field_mapping,
       sourceDocData,
     );
@@ -854,10 +1005,10 @@ function renderZpl(
   return replaceRemainingTemplateTokens(raw, {}, sourceDocData);
 }
 
-function renderHtml(
+async function renderHtml(
   template: LabelMaster,
   docData: Record<string, unknown>,
-): string {
+): Promise<string> {
   const sourceDocData = getEffectiveSourceDocData(docData);
   let raw = template.html_code ?? "";
 
@@ -872,7 +1023,7 @@ function renderHtml(
   let resolvedValues: Record<string, string> = {};
   let transformedDocData: Record<string, unknown> = sourceDocData;
   if (template.field_mapping && Object.keys(template.field_mapping).length > 0) {
-    const res = resolveAllTransformations(
+    const res = await resolveAllTransformations(
       template.field_mapping,
       sourceDocData,
     );
@@ -973,10 +1124,10 @@ function renderHtml(
   }
 }
 
-function renderXdp(
+async function renderXdp(
   template: LabelMaster,
   docData: Record<string, unknown>,
-): string {
+): Promise<string> {
   const sourceDocData = getEffectiveSourceDocData(docData);
   const raw = template.xdp_code ?? "";
 
@@ -990,7 +1141,7 @@ function renderXdp(
 
   if (template.field_mapping && Object.keys(template.field_mapping).length > 0) {
     // Two-pass: resolve all transformations first, then substitute
-    const { resolvedValues, enrichedDoc } = resolveAllTransformations(
+    const { resolvedValues, enrichedDoc } = await resolveAllTransformations(
       template.field_mapping,
       sourceDocData,
     );
@@ -1130,7 +1281,7 @@ async function dispatchZpl(
   template: LabelMaster,
   docData: Record<string, unknown>,
 ): Promise<void> {
-  const zplPayload = renderZpl(template, docData);
+  const zplPayload = await renderZpl(template, docData);
   console.log(`[API3] ZPL payload preview:`, zplPayload.slice(0, 500));
   console.log(`[API3] Sending ZPL to ${printerHost}:9100`);
   await sendZPLViaTCP(printerHost, zplPayload);
@@ -1142,7 +1293,7 @@ async function dispatchHtml(
   template: LabelMaster,
   docData: Record<string, unknown>,
 ): Promise<void> {
-  const htmlPayload = renderHtml(template, docData);
+  const htmlPayload = await renderHtml(template, docData);
   console.log(`[API3] HTML payload preview:`, htmlPayload.slice(0, 500));
   console.log(`[API3] Converting HTML to PDF...`);
   const pdfBuffer = await htmlToPdf(htmlPayload);
@@ -1156,7 +1307,7 @@ async function dispatchXdp(
   template: LabelMaster,
   docData: Record<string, unknown>,
 ): Promise<void> {
-  const xdpPayload = renderXdp(template, docData);
+  const xdpPayload = await renderXdp(template, docData);
   console.log(`[API3] XDP payload preview:`, xdpPayload.slice(0, 500));
   // TODO: implement actual XDP printer transport (e.g. HTTP POST to AEM/LiveCycle)
   console.log(`[API3] XDP dispatch to ${printerHost} — not yet implemented, payload logged`);
@@ -1164,10 +1315,10 @@ async function dispatchXdp(
 
 // ── OLD functions (untouched) ──────────────────────────────────────────────────
 
-function renderTemplate(
+async function renderTemplate(
   template: LabelMaster,
   docData: Record<string, unknown>,
-): string {
+): Promise<string> {
   const isZpl =
     template.output_mode === "zpl" || template.output_mode === "both";
 
@@ -1201,7 +1352,7 @@ function renderTemplate(
       console.log("docData",docData);
       console.log("docField",docField);
 
-      const value = applyTransformations(docData, docField);
+      const value = await applyTransformations(docData, docField);
       const valueStr = String(value ?? "");
 
       rendered = rendered.replace(
@@ -1260,10 +1411,10 @@ function renderTemplate(
   return rendered;
 }
 
-function newrenderTemplate(
+async function newrenderTemplate(
   template: LabelMaster,
   docData: Record<string, unknown>,
-): string {
+): Promise<string> {
   const isZpl =
     template.output_mode === "zpl" || template.output_mode === "both";
 
@@ -1297,7 +1448,7 @@ function newrenderTemplate(
       console.log("docData",docData);
       console.log("docField",docField);
 
-      const value = applyTransformations(docData, docField);
+      const value = await applyTransformations(docData, docField);
       const valueStr = String(value ?? "");
 
       rendered = rendered.replace(
@@ -1398,7 +1549,7 @@ export async function processOutputAgent(outputId: string): Promise<void> {
 
     console.log(`[API3] Document data:`, docData);
         
-    const finalPayload = renderTemplate(template, docData);
+    const finalPayload = await renderTemplate(template, docData);
 
     await pool.query(
     `UPDATE outputs SET rendered_output = $1, updated_by = 'system', updated_on = NOW() WHERE output_id = $2`,
@@ -1508,12 +1659,14 @@ export async function newprocessOutputAgent(outputId: string, simulate: boolean,
     }
     console.log("executed");
     // Always render so rendered_output is saved regardless of print_to_file.
-    const representativePayload =
-      template.output_mode === "html"
-        ? renderHtml(template, docData)
-        : template.output_mode === "xdp"
-          ? renderXdp(template, docData)
-          : renderZpl(template, docData);
+    let representativePayload: string;
+    if (template.output_mode === "html") {
+      representativePayload = await renderHtml(template, docData);
+    } else if (template.output_mode === "xdp") {
+      representativePayload = await renderXdp(template, docData);
+    } else {
+      representativePayload = await renderZpl(template, docData);
+    }
 
     // ── 5. Persist rendered output ────────────────────────────────────────────
     await pool.query(
