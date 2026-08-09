@@ -234,6 +234,8 @@ export async function getAgentModel(processName: string, agentName: string): Pro
   return new ChatModel(provider, modelId, agentName);
 }
 
+import { repairJsonString } from "./jsonUtils";
+
 // Drop-in Replacement for callLLM using LangChain Compatibility Layer
 export async function callLangChainAgent(
   processName: string,
@@ -251,10 +253,16 @@ export async function callLangChainAgent(
   }
   messages.push({ role: 'user', content: prompt });
 
-  return model.invoke(messages, {
+  const resText = await model.invoke(messages, {
     responseMimeType,
     imageBytes: imageBytes || undefined
   });
+
+  if (responseMimeType === "application/json") {
+    return repairJsonString(resText);
+  }
+
+  return resText;
 }
 
 // ─── LangGraph Compatibility: State Graph ───────────────────────────────────

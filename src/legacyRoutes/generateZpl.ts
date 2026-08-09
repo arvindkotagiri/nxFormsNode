@@ -10,6 +10,7 @@ import { resolve } from 'path';
 // and must use forward slashes (URL format) — critical on Windows.
 const CMAP_DIR = resolve(require.resolve('pdfjs-dist/package.json'), '..', 'cmaps').replace(/\\/g, '/') + '/';
 import { callLangChainAgent } from '../utils/langchainCompat';
+import { safeJsonParse } from '../utils/jsonUtils';
 
 const router = express.Router();
 const upload = multer({
@@ -100,7 +101,7 @@ async function cropParts(pageImageBuffer, widthIn, dpi, htmlDesign) {
   const promptFind = "Return JSON list of objects: {'field_name': 'logo'|'signature', 'box_2d': [ymin, xmin, ymax, xmax]}. For logos and signatures, ensure the box_2d coordinates encompass the ENTIRE graphic without any edge truncation.";
   try {
     const res = await callLangChainAgent('zpl', 'ZPL Assets Finding Agent', promptFind, null, pageImageBuffer, "application/json");
-    let items = JSON.parse(res);
+    let items = safeJsonParse(res, []);
     if (items && typeof items === 'object') {
       if (Array.isArray(items.fields)) items = items.fields;
       else if (Array.isArray(items.data)) items = items.data;
@@ -295,7 +296,7 @@ router.post('/generate-zpl', upload.single('image'), async (req, res) => {
       try {
         const analysisPrompt = "Return JSON list of {'field_name': '...', 'value': '...'}";
         const analysisRes = await callLangChainAgent('zpl', `ZPL Page ${pageIdx + 1} Analysis Agent`, analysisPrompt, null, pImg, "application/json");
-        let fieldData = JSON.parse(analysisRes);
+        let fieldData = safeJsonParse(analysisRes, []);
         if (fieldData && typeof fieldData === 'object') {
           if (Array.isArray(fieldData.fields)) fieldData = fieldData.fields;
         }

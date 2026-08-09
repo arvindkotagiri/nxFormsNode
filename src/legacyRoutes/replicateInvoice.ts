@@ -9,6 +9,7 @@ import { resolve } from 'path';
 // and must use forward slashes (URL format) — critical on Windows.
 const CMAP_DIR = resolve(require.resolve('pdfjs-dist/package.json'), '..', 'cmaps').replace(/\\/g, '/') + '/';
 import { callLangChainAgent } from '../utils/langchainCompat';
+import { safeJsonParse } from '../utils/jsonUtils';
 import Handlebars from 'handlebars';
 
 const router = express.Router();
@@ -316,7 +317,7 @@ async function cropImageParts(pageImageBuffer) {
   `;
   try {
     const res = await callLangChainAgent('invoice', 'Crop Assets Agent', promptFindCrops, null, pageImageBuffer, "application/json");
-    let items = JSON.parse(res);
+    let items = safeJsonParse(res, []);
     if (items && typeof items === 'object') {
       if (Array.isArray(items.fields)) items = items.fields;
       else if (Array.isArray(items.data)) items = items.data;
@@ -424,7 +425,7 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
         console.log(`[SUCCESS] Page ${pageIdx + 1} replica received`);
 
         try {
-          const data = JSON.parse(rawResponse);
+          const data = safeJsonParse(rawResponse, {});
           const htmlContent = data.full_invoice_html || (Array.isArray(data) ? data[0].full_invoice_html : '');
           if (htmlContent) {
             const stripped = stripHtmlWrappers(htmlContent);
@@ -468,7 +469,7 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
       try {
         const analysisPrompt = "Return JSON list of {'field_name': '...', 'value': '...'}";
         const analysisRes = await callLangChainAgent('invoice', 'Replication PDF Analysis Agent', analysisPrompt, null, firstPageBytes, "application/json");
-        let fieldData = JSON.parse(analysisRes);
+        let fieldData = safeJsonParse(analysisRes, []);
         if (fieldData && typeof fieldData === 'object') {
           if (Array.isArray(fieldData.fields)) fieldData = fieldData.fields;
         }
@@ -513,7 +514,7 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
       const rawMappings = req.body.field_mappings || '{}';
       let fieldMappings = {};
       try {
-        fieldMappings = JSON.parse(rawMappings);
+        fieldMappings = safeJsonParse(rawMappings, {});
         if (fieldMappings && Object.keys(fieldMappings).length > 0) {
           console.log(`[INFO] Received ${Object.keys(fieldMappings).length} field mapping(s):`);
           for (const [k, v] of Object.entries(fieldMappings)) {
@@ -547,7 +548,7 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
 
       let data;
       try {
-        data = JSON.parse(rawResponse);
+        data = safeJsonParse(rawResponse, {});
       } catch (jsonErr) {
         console.error("[ERROR] Failed to parse LLM JSON response:", jsonErr.message);
         return res.status(500).json({ error: "Invalid JSON from LLM", raw: rawResponse });
@@ -590,7 +591,7 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
           imgBytes,
           "application/json"
         );
-        let fieldData = JSON.parse(analysisRes);
+        let fieldData = safeJsonParse(analysisRes, []);
         if (fieldData && typeof fieldData === 'object') {
           if (Array.isArray(fieldData.fields)) fieldData = fieldData.fields;
         }

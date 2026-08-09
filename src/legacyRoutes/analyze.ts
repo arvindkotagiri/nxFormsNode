@@ -12,6 +12,7 @@ import { resolve } from 'path';
 // and must use forward slashes (URL format) — critical on Windows.
 const CMAP_DIR = resolve(require.resolve('pdfjs-dist/package.json'), '..', 'cmaps').replace(/\\/g, '/') + '/';
 import { callLangChainAgent } from '../utils/langchainCompat';
+import { safeJsonParse } from '../utils/jsonUtils';
 
 const router = express.Router();
 const upload = multer({
@@ -174,7 +175,7 @@ router.post('/analyze-label', upload.single('image'), async (req, res) => {
           "application/json"
         );
 
-        let extractedData = JSON.parse(rawResponse);
+        let extractedData = safeJsonParse(rawResponse, {});
         if (extractedData && typeof extractedData === 'object') {
           if (Array.isArray(extractedData.fields)) {
             extractedData = extractedData.fields;
@@ -229,7 +230,7 @@ router.post('/analyze-label', upload.single('image'), async (req, res) => {
         "application/json"
       );
 
-      let extractedData = JSON.parse(rawResponse);
+      let extractedData = safeJsonParse(rawResponse, {});
       if (extractedData && typeof extractedData === 'object') {
         if (Array.isArray(extractedData.fields)) {
           extractedData = extractedData.fields;

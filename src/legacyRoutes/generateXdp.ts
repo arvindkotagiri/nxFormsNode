@@ -10,6 +10,7 @@ import { resolve } from 'path';
 // and must use forward slashes (URL format) — critical on Windows.
 const CMAP_DIR = resolve(require.resolve('pdfjs-dist/package.json'), '..', 'cmaps').replace(/\\/g, '/') + '/';
 import { callLangChainAgent } from '../utils/langchainCompat';
+import { safeJsonParse } from '../utils/jsonUtils';
 
 const router = express.Router();
 const upload = multer({
@@ -121,7 +122,7 @@ router.post('/generate-xdp', upload.single('image'), async (req, res) => {
       "application/json"
     );
 
-    const data = JSON.parse(rawResponse);
+    const data = safeJsonParse(rawResponse, {});
     const xdpCode = data.xdp_code || '';
 
     if (!xdpCode) {
@@ -152,7 +153,7 @@ router.post('/generate-xdp', upload.single('image'), async (req, res) => {
     try {
       const analysisPrompt = "Return JSON list of {'field_name': '...', 'value': '...'}";
       const analysisRes = await callLangChainAgent('xdp', 'XDP Fields Analysis Agent', analysisPrompt, null, imgBytes, "application/json");
-      let fieldData = JSON.parse(analysisRes);
+      let fieldData = safeJsonParse(analysisRes, []);
       if (fieldData && typeof fieldData === 'object') {
         if (Array.isArray(fieldData.fields)) fieldData = fieldData.fields;
       }
