@@ -866,6 +866,7 @@ function applyTableLoopConfigs(
       cfg.entitySetKey = "contactTables";
       cfg.innerEntitySetKey = "endUserGroups";
       cfg.alreadySorted = true;
+      cfg.filters = [];
     }
 
     let foundArray: any[] = [];
