@@ -861,6 +861,13 @@ function applyTableLoopConfigs(
   for (const cfg of tableConfigs) {
     if (!cfg.entitySetKey) continue;
 
+    // Normalize SalesOrderItemPartners to contactTables / endUserGroups for UI catalog mapping compatibility
+    if (cfg.entitySetKey === "SalesOrderItemPartners") {
+      cfg.entitySetKey = "contactTables";
+      cfg.innerEntitySetKey = "endUserGroups";
+      cfg.alreadySorted = true;
+    }
+
     let foundArray: any[] = [];
     const collectArray = (arr: any[]) => {
       foundArray = arr;
