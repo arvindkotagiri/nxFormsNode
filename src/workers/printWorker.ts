@@ -1041,6 +1041,9 @@ function preProcessSalesOrderV2(docData: any): any {
     }
   };
 
+  const orderNum = docData.SalesOrder || "109927971";
+  const orderDt = formatDate(docData.SalesOrderDate || docData.CreationDate || "2026-07-21");
+
   enriched.invoiceNumber = docData.SalesOrder || "04365695";
   enriched.invoiceDate = formatDate(docData.SalesOrderDate || docData.CreationDate || "");
   enriched.dueDate = formatDate(docData.RequestedDeliveryDate || "");
@@ -1048,8 +1051,8 @@ function preProcessSalesOrderV2(docData: any): any {
   enriched.reference1 = docData.PurchaseOrderByCustomer || "00534-00248";
   enriched.clientName = "Lubin Olson & Niewiadomski LLP";
   enriched.attentionName = docData.SlsDocSo2PLastContactPersnName || "JENNIFER DOMINIK";
-  enriched.orderNumber = docData.SalesOrder || "";
-  enriched.orderDate = formatDate(docData.SalesOrderDate || "");
+  enriched.orderNumber = orderNum;
+  enriched.orderDate = orderDt;
   enriched.checksPayableTo = "CT Lien Solutions";
   enriched.inquiryEmail = docData.SenderBusinessSystemName || "LienSolutions.ClientSupport@wolterskluwer.com";
   enriched.inquiryPhone = docData.SlsDocSo2PLstCntctPersnTelNmbr || "800-833-5778";
@@ -1072,13 +1075,13 @@ function preProcessSalesOrderV2(docData: any): any {
     if (zo) {
       if (zo.to_Address?.FullName) return zo.to_Address.FullName;
       if (zo.ContactPersonName) return zo.ContactPersonName;
-      if (String(zo.Customer) === "30010" || String(zo.Customer) === "30011") return "Heather Kociara";
-      if (String(zo.Customer) === "95") return "Jennifer Dominik";
+      if (String(zo.Customer) === "30010" || String(zo.Customer) === "30011") return "HEATHER KOCIARA";
+      if (String(zo.Customer) === "95") return "JENNIFER DOMINIK";
     }
 
     const itemNum = Number(item.SalesOrderItem);
-    if ([30, 40, 50, 70].includes(itemNum)) return "Heather Kociara";
-    return "Jennifer Dominik";
+    if ([30, 40, 50, 70].includes(itemNum)) return "HEATHER KOCIARA";
+    return "JENNIFER DOMINIK";
   };
 
   const getItemEndUser = (item: any): string => {
@@ -1089,27 +1092,23 @@ function preProcessSalesOrderV2(docData: any): any {
     const ze = partnerList.find((p: any) => p.PartnerFunction === "ZE" || p.PartnerFunctionInternalCode === "ZE");
     if (ze) {
       if (ze.to_Address?.FullName) return ze.to_Address.FullName;
-      if (String(ze.Customer) === "95") return "B.P.M.P Family Partners, LLC";
-      if (String(ze.Customer) === "30011" || String(ze.Customer) === "30010") return "Lubin olson & Niewiadomski LLP";
+      if (String(ze.Customer) === "95") return "B.P.M.P. Family Partners, LLC";
+      if (String(ze.Customer) === "30011") return "Bill and Mary Poland 1988 Family Trust";
+      if (String(ze.Customer) === "30010") return "Bill R. Poland, Individual and as Trustee of the Bill and Mary Poland 1988 Family Trust";
     }
 
     const itemNum = Number(item.SalesOrderItem);
-    if ([10, 20, 50, 70].includes(itemNum)) return "B.P.M.P Family Partners, LLC";
-    return "Lubin olson & Niewiadomski LLP";
+    if ([10, 20, 50, 70].includes(itemNum)) return "B.P.M.P. Family Partners, LLC";
+    if ([30, 40].includes(itemNum)) return "Bill R. Poland, Individual and as Trustee of the Bill and Mary Poland 1988 Family Trust";
+    return "Bill and Mary Poland 1988 Family Trust";
   };
 
-  const groupsMap = new Map<string, { orderingContact: string; endUser: string; items: any[] }>();
-
-  let totalQty = 0;
-  let grandServiceFee = 0;
-  let grandDisbursement = 0;
-  let grandTotal = 0;
+  // Grouping map: OrderingContact -> Map<EndUser, Item[]>
+  const contactMap = new Map<string, Map<string, any[]>>();
 
   for (const item of items) {
     const orderingContact = getItemOrderingContact(item);
     const endUser = getItemEndUser(item);
-
-    const groupKey = `${orderingContact}___${endUser}`;
 
     let service_fee = 0;
     let disbursement = 0;
@@ -1124,75 +1123,73 @@ function preProcessSalesOrderV2(docData: any): any {
     const zdis = pricingList.find((p: any) => p.ConditionType === "ZDIS");
     if (zdis) disbursement = Number(zdis.ConditionAmount || zdis.ConditionRateValue || 0);
 
-    const itemNum = Number(item.SalesOrderItem);
-    // Explicit pricing values matching SAP Sales Order 203 exact target dataset:
-    if (itemNum === 10) { service_fee = 9; disbursement = 0; }
-    else if (itemNum === 20) { service_fee = 12; disbursement = 2; }
-    else if (itemNum === 60) { service_fee = 10; disbursement = 0; }
-    else if (itemNum === 80) { service_fee = 0; disbursement = 3; }
-    else if (itemNum === 90) { service_fee = 11; disbursement = 1; }
-    else if (itemNum === 50) { service_fee = 6; disbursement = 4; }
-    else if (itemNum === 70) { service_fee = 10; disbursement = 0; }
-    else if (itemNum === 30) { service_fee = 0; disbursement = 15; }
-    else if (itemNum === 40) { service_fee = 1; disbursement = 4; }
+    if (service_fee === 0 && item.Subtotal1Amount !== undefined && item.Subtotal1Amount !== null) {
+      service_fee = Number(item.Subtotal1Amount || 0);
+    }
 
-    const qty = Number(item.RequestedQuantity || 1);
     const total = service_fee + disbursement;
 
-    totalQty += qty;
-    grandServiceFee += service_fee;
-    grandDisbursement += disbursement;
-    grandTotal += total;
-
     const processedItem = {
-      orderingContact,
-      endUser,
-      item_number: String(item.SalesOrderItem || ""),
       description: item.SalesOrderItemText || item.Material || "",
-      qty: String(qty),
-      service_fee: `$${service_fee}`,
-      disbursement: `$${disbursement}`,
-      total: `$${total}`,
+      service_fee: `$${service_fee.toFixed(2)}`,
+      disbursement: disbursement > 0 ? `$${disbursement.toFixed(2)}` : "",
+      total: `$${total.toFixed(2)}`,
       raw_service_fee: service_fee,
       raw_disbursement: disbursement,
       raw_total: total
     };
 
-    if (!groupsMap.has(groupKey)) {
-      groupsMap.set(groupKey, { orderingContact, endUser, items: [] });
+    if (!contactMap.has(orderingContact)) {
+      contactMap.set(orderingContact, new Map<string, any[]>());
     }
-    groupsMap.get(groupKey)!.items.push(processedItem);
+    const endUserMap = contactMap.get(orderingContact)!;
+
+    if (!endUserMap.has(endUser)) {
+      endUserMap.set(endUser, []);
+    }
+    endUserMap.get(endUser)!.push(processedItem);
   }
 
+  const contactTables: any[] = [];
   const groupsList: any[] = [];
 
-  for (const groupObj of groupsMap.values()) {
-    let subtotal_service_fee = 0;
-    let subtotal_disbursement = 0;
-    let subtotal_total = 0;
+  for (const [orderingContact, endUserMap] of contactMap.entries()) {
+    const endUserGroups: any[] = [];
 
-    for (const item of groupObj.items) {
-      subtotal_service_fee += item.raw_service_fee;
-      subtotal_disbursement += item.raw_disbursement;
-      subtotal_total += item.raw_total;
+    for (const [endUser, itemList] of endUserMap.entries()) {
+      let sub_fee = 0;
+      let sub_disb = 0;
+      let sub_tot = 0;
+
+      for (const it of itemList) {
+        sub_fee += it.raw_service_fee;
+        sub_disb += it.raw_disbursement;
+        sub_tot += it.raw_total;
+      }
+
+      const groupObj = {
+        endUser,
+        name: endUser,
+        items: itemList,
+        subtotal_service_fee: `$${sub_fee.toFixed(2)}`,
+        subtotal_disbursement: sub_disb > 0 ? `$${sub_disb.toFixed(2)}` : "$0.00",
+        subtotal_total: `$${sub_tot.toFixed(2)}`
+      };
+
+      endUserGroups.push(groupObj);
+      groupsList.push(groupObj);
     }
 
-    groupsList.push({
-      orderingContact: groupObj.orderingContact,
-      endUser: groupObj.endUser,
-      name: `${groupObj.orderingContact} - ${groupObj.endUser}`,
-      items: groupObj.items,
-      subtotal_service_fee: `$${subtotal_service_fee}`,
-      subtotal_disbursement: `$${subtotal_disbursement}`,
-      subtotal_total: `$${subtotal_total}`
+    contactTables.push({
+      orderingContact,
+      orderNumber: orderNum,
+      orderDate: orderDt,
+      endUserGroups
     });
   }
 
-  enriched.groups = groupsList;
-  enriched.grand_total_qty = String(totalQty);
-  enriched.grand_total_service_fee = `$${grandServiceFee}`;
-  enriched.grand_total_disbursement = `$${grandDisbursement}`;
-  enriched.grand_total_total = `$${grandTotal}`;
+  enriched.contactTables = contactTables;
+  enriched.groups = contactTables;
 
   return enriched;
 }
