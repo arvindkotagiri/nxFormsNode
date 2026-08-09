@@ -34,8 +34,37 @@ export function repairJsonString(jsonStr: string): string {
     str = str.substring(startIndex, endIndex + 1);
   }
 
-  // 3. Remove trailing commas before brackets/braces
-  str = str.replace(/,\s*([\]}])/g, "$1");
+  // 3. Remove trailing commas before brackets/braces (safe string-literal-aware implementation)
+  let inStrLiteral = false;
+  let isEscaped = false;
+  let chars = str.split("");
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i];
+    if (inStrLiteral) {
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (c === "\\") {
+        isEscaped = true;
+      } else if (c === '"') {
+        inStrLiteral = false;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inStrLiteral = true;
+      continue;
+    }
+    if (c === ",") {
+      let nextIdx = i + 1;
+      while (nextIdx < chars.length && /\s/.test(chars[nextIdx])) {
+        nextIdx++;
+      }
+      if (nextIdx < chars.length && (chars[nextIdx] === "}" || chars[nextIdx] === "]")) {
+        chars[i] = "";
+      }
+    }
+  }
+  str = chars.join("");
 
   // 4. Try quick parse
   try {
