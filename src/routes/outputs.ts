@@ -29,7 +29,7 @@ router.get("/", async (req, res) => {
         ${auditSelectSql("o")}
       FROM outputs o
       JOIN events e ON o.event_id = e.event_id
-      ORDER BY o.output_id DESC
+      ORDER BY e.event_number DESC, o.output_number DESC
     `);
 
     const formatted = result.rows.map((r) => {

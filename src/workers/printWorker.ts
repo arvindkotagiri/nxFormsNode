@@ -1194,7 +1194,7 @@ function preProcessSalesOrderV2(docData: any): any {
   return enriched;
 }
 
-function renderHtml(
+async function renderHtml(
   template: LabelMaster,
   docData: Record<string, unknown>,
 ): Promise<string> {
