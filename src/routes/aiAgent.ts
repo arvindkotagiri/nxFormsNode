@@ -35,7 +35,7 @@ router.post('/mapping-agent', async (req: Request, res: Response) => {
       });
     }
 
-    const modelName = process.env.GEMINI_MODEL || "gemini-3.5-flash";
+    const modelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
     let llm = new ChatGoogleGenerativeAI({
       apiKey,
       model: modelName,
@@ -133,10 +133,10 @@ ${prompt}
     try {
       result = await llm.invoke(messages);
     } catch (modelErr: any) {
-      console.warn(`[AI Agent] Model ${modelName} invocation failed, falling back to gemini-1.5-flash:`, modelErr?.message);
+      console.warn(`[AI Agent] Model ${modelName} invocation failed, falling back to gemini-2.0-flash-lite:`, modelErr?.message);
       const fallbackLlm = new ChatGoogleGenerativeAI({
         apiKey,
-        model: "gemini-1.5-flash",
+        model: "gemini-2.0-flash-lite",
         temperature: 0.2,
         maxOutputTokens: 2048,
       });
@@ -167,7 +167,7 @@ ${prompt}
     const duration = Date.now() - startTime;
     logLLMTrace({
       agent_name: 'AI_Mapping_Copilot',
-      model_used: 'gemini-1.5-flash',
+      model_used: modelName,
       prompt_tokens: 0,
       completion_tokens: 0,
       total_tokens: 0,
