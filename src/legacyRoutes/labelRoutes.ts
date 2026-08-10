@@ -4,7 +4,7 @@ import { pool } from '../db';
 
 const router = express.Router();
 
-router.get('/labels', async (req, res) => {
+router.get(['/labels', '/api/labels'], async (req, res) => {
   try {
     const query = `
       SELECT 
@@ -28,6 +28,7 @@ router.get('/labels', async (req, res) => {
     `;
 
     const result = await pool.query(query);
+    res.setHeader("Cache-Control", "no-store");
     res.status(200).json(result.rows);
   } catch (err) {
     console.error("Error fetching labels:", err);
@@ -35,7 +36,7 @@ router.get('/labels', async (req, res) => {
   }
 });
 
-router.delete('/labels/:uuid', async (req, res) => {
+router.delete(['/labels/:uuid', '/api/labels/:uuid'], async (req, res) => {
   try {
     const { uuid } = req.params;
     const query = `
