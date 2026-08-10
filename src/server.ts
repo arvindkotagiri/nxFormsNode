@@ -108,6 +108,7 @@ app.use("/api", generateXdpRoutes);
 app.use("/", replicateInvoiceRoutes);
 app.use("/api", replicateInvoiceRoutes);
 app.use("/api", apiMasterRoutes);
+app.use("/", printerRoutes);
 app.use("/api", printerRoutes);
 app.use("/api", legacyImageRetentionRoutes);
 app.use("/api/observability", observabilityRoutes);

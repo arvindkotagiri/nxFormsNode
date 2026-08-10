@@ -127,7 +127,7 @@ router.post('/print-zpl', async (req, res) => {
   }
 });
 
-router.post('/print-job', async (req, res) => {
+router.post(['/print-job', '/api/print-job'], async (req, res) => {
   try {
     const data = req.body || {};
     const printer_id = data.printer_id || null;
@@ -142,12 +142,12 @@ router.post('/print-job', async (req, res) => {
 
     const jobId = result.rows[0].id;
     res.status(202).json({ status: "queued", job_id: jobId, site_id });
-  } catch (err) {
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.get('/jobs/pending/:site_id', async (req, res) => {
+router.get(['/jobs/pending/:site_id', '/api/jobs/pending/:site_id'], async (req, res) => {
   const { site_id } = req.params;
   try {
     const client = await pool.connect();
@@ -171,6 +171,7 @@ router.get('/jobs/pending/:site_id', async (req, res) => {
       }
 
       await client.query('COMMIT');
+      res.setHeader("Cache-Control", "no-store");
       res.status(200).json(jobs);
     } catch (txErr) {
       await client.query('ROLLBACK');
@@ -178,12 +179,12 @@ router.get('/jobs/pending/:site_id', async (req, res) => {
     } finally {
       client.release();
     }
-  } catch (err) {
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.patch('/jobs/:job_id/status', async (req, res) => {
+router.patch(['/jobs/:job_id/status', '/api/jobs/:job_id/status'], async (req, res) => {
   const { job_id } = req.params;
   try {
     const data = req.body || {};
@@ -196,13 +197,13 @@ router.patch('/jobs/:job_id/status', async (req, res) => {
     );
 
     res.status(200).json({ status: "success" });
-  } catch (err) {
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // GET all print jobs for Job Queue UI
-router.get(['/jobs', '/api/print-jobs'], async (req, res) => {
+router.get(['/jobs', '/api/jobs', '/print-jobs', '/api/print-jobs'], async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT j.id, j.printer_id, j.site_id, j.payload, j.copies, j.status, j.error_msg, j.created_on, j.updated_on,
@@ -220,7 +221,7 @@ router.get(['/jobs', '/api/print-jobs'], async (req, res) => {
 });
 
 // Retry a print job
-router.post(['/jobs/:job_id/retry', '/api/print-jobs/:job_id/retry'], async (req, res) => {
+router.post(['/jobs/:job_id/retry', '/api/jobs/:job_id/retry', '/print-jobs/:job_id/retry', '/api/print-jobs/:job_id/retry'], async (req, res) => {
   const { job_id } = req.params;
   try {
     await pool.query(
@@ -234,7 +235,7 @@ router.post(['/jobs/:job_id/retry', '/api/print-jobs/:job_id/retry'], async (req
 });
 
 // Delete/cancel a print job
-router.delete(['/jobs/:job_id', '/api/print-jobs/:job_id'], async (req, res) => {
+router.delete(['/jobs/:job_id', '/api/jobs/:job_id', '/print-jobs/:job_id', '/api/print-jobs/:job_id'], async (req, res) => {
   const { job_id } = req.params;
   try {
     await pool.query("DELETE FROM print_jobs WHERE id = $1", [job_id]);
@@ -244,7 +245,7 @@ router.delete(['/jobs/:job_id', '/api/print-jobs/:job_id'], async (req, res) => 
   }
 });
 
-router.post('/direct-print', async (req, res) => {
+router.post(['/direct-print', '/api/direct-print'], async (req, res) => {
   try {
     const data = req.body || {};
     const ip = data.ip_address;
@@ -259,9 +260,9 @@ router.post('/direct-print', async (req, res) => {
     if (success) {
       res.status(200).json({ status: "success" });
     } else {
-      res.status(500).json({ status: "failed", error: error });
+      res.status(500).json({ status: "failed", error: error || "Connection timed out" });
     }
-  } catch (err) {
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
