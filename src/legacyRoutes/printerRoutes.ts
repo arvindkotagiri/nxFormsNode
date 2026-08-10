@@ -127,6 +127,26 @@ router.post('/print-zpl', async (req, res) => {
   }
 });
 
+router.post('/print-job', async (req, res) => {
+  try {
+    const data = req.body || {};
+    const printer_id = data.printer_id || null;
+    const payload = data.payload || data.rendered_output || "";
+    const site_id = data.site_id || "DEFAULT_SITE";
+    const copies = data.copies !== undefined ? parseInt(data.copies, 10) : 1;
+
+    const result = await pool.query(
+      "INSERT INTO print_jobs (printer_id, site_id, payload, copies, status) VALUES ($1, $2, $3, $4, 'PENDING') RETURNING id",
+      [printer_id, site_id, payload, copies]
+    );
+
+    const jobId = result.rows[0].id;
+    res.status(202).json({ status: "queued", job_id: jobId, site_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/jobs/pending/:site_id', async (req, res) => {
   const { site_id } = req.params;
   try {
