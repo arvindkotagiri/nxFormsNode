@@ -73,6 +73,12 @@ router.get("/", async (req, res) => {
     // prevent caching (avoid 304 Not Modified)
     res.setHeader("Cache-Control", "no-store");
     res.json(formatted);
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Failed to fetch logs" });
+  }
+});
+
 // POST /api/logs
 router.post("/", async (req, res) => {
   try {
