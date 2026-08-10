@@ -73,9 +73,18 @@ router.get("/", async (req, res) => {
     // prevent caching (avoid 304 Not Modified)
     res.setHeader("Cache-Control", "no-store");
     res.json(formatted);
+// POST /api/logs
+router.post("/", async (req, res) => {
+  try {
+    const { level, service, message, username, trace_id, metadata } = req.body || {};
+    const result = await pool.query(
+      `INSERT INTO logs_audit (level, service, message, username, trace_id, metadata, event_timestamp)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING log_id`,
+      [level || "INFO", service || "PRINT_AGENT", message || "", username || "System", trace_id || null, metadata ? JSON.stringify(metadata) : null]
+    );
+    res.status(201).json({ status: "success", log_id: result.rows[0].log_id });
   } catch (err: any) {
-    console.error(err);
-    res.status(500).json({ error: err.message || "Failed to fetch logs" });
+    res.status(500).json({ error: err.message || "Failed to save log entry" });
   }
 });
 

@@ -155,9 +155,9 @@ router.get('/jobs/pending/:site_id', async (req, res) => {
       await client.query('BEGIN');
 
       const selectQuery = `
-        SELECT j.id, j.payload, j.copies, p.ip_address, p.type
+        SELECT j.id, j.payload, j.copies, COALESCE(p.ip_address, '127.0.0.1') as ip_address, COALESCE(p.type, 'STANDARD') as type
         FROM print_jobs j
-        JOIN printer_master p ON j.printer_id = p.id
+        LEFT JOIN printer_master p ON j.printer_id = p.id
         WHERE j.site_id = $1 AND j.status = 'PENDING'
         ORDER BY j.created_on ASC;
       `;
@@ -197,6 +197,49 @@ router.patch('/jobs/:job_id/status', async (req, res) => {
 
     res.status(200).json({ status: "success" });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET all print jobs for Job Queue UI
+router.get(['/jobs', '/api/print-jobs'], async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT j.id, j.printer_id, j.site_id, j.payload, j.copies, j.status, j.error_msg, j.created_on, j.updated_on,
+             p.name as printer_name, p.ip_address as printer_ip
+      FROM print_jobs j
+      LEFT JOIN printer_master p ON j.printer_id = p.id
+      ORDER BY j.created_on DESC
+      LIMIT 200
+    `);
+    res.setHeader("Cache-Control", "no-store");
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Retry a print job
+router.post(['/jobs/:job_id/retry', '/api/print-jobs/:job_id/retry'], async (req, res) => {
+  const { job_id } = req.params;
+  try {
+    await pool.query(
+      "UPDATE print_jobs SET status = 'PENDING', error_msg = NULL, updated_on = NOW() WHERE id = $1",
+      [job_id]
+    );
+    res.json({ status: "success" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete/cancel a print job
+router.delete(['/jobs/:job_id', '/api/print-jobs/:job_id'], async (req, res) => {
+  const { job_id } = req.params;
+  try {
+    await pool.query("DELETE FROM print_jobs WHERE id = $1", [job_id]);
+    res.json({ status: "success" });
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
