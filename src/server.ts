@@ -111,8 +111,11 @@ app.use("/api", apiMasterRoutes);
 app.use("/", printerRoutes);
 app.use("/api", printerRoutes);
 app.use("/api", legacyImageRetentionRoutes);
+import aiAgentRoutes from "./routes/aiAgent";
+
 app.use("/api/observability", observabilityRoutes);
 app.use("/api/support", ticketsRoutes);
+app.use("/api/ai", aiAgentRoutes);
 
 // Health check (matches your FastAPI /health)
 app.get(["/health", "/api/health"], async (_req, res) => {

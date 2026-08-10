@@ -16,6 +16,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
     "@google/generative-ai": "^0.24.1",
+    "@langchain/core": "^1.2.5",
+    "@langchain/google-genai": "^2.2.0",
     "@types/uuid": "^10.0.0",
     "@xmldom/xmldom": "^0.9.10",
     "archiver": "^7.0.1",
