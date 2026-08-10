@@ -54,7 +54,7 @@ router.post('/init-labels-db', async (req, res) => {
   }
 });
 
-router.post('/save-label', async (req, res) => {
+router.post(['/save-label', '/api/save-label'], async (req, res) => {
   try {
     const data = req.body || {};
     const uuid = data.uuid;
