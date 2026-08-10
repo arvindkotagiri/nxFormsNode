@@ -28,6 +28,7 @@ router.post('/mapping-agent', async (req: Request, res: Response) => {
     }: MappingAgentRequest = req.body;
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || (await getApiKey('gemini'));
+    console.log(`[AI Agent] Gemini API key resolved (length: ${apiKey ? apiKey.length : 0})`);
     if (!apiKey) {
       return res.status(400).json({
         error: "GEMINI_API_KEY is not configured in .env or database settings."

@@ -94,9 +94,12 @@ app.use("/simulation", simulationRoutes);
 app.use("/api/simulation", simulationRoutes);
 app.use("/image-retention", imageRetentionRoutes);
 app.use("/api/image-retention", imageRetentionRoutes);
-app.use("/api/observability", observabilityRoutes);
-app.use("/api/support", ticketsRoutes);
+app.use("/ai", aiAgentRoutes);
 app.use("/api/ai", aiAgentRoutes);
+app.use("/observability", observabilityRoutes);
+app.use("/api/observability", observabilityRoutes);
+app.use("/support", ticketsRoutes);
+app.use("/api/support", ticketsRoutes);
 
 app.use("/", dbRoutes);
 app.use("/api", dbRoutes);
