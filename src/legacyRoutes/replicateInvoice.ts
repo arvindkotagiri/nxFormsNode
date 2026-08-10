@@ -463,28 +463,7 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
 
       const htmlResult = combinedHtml;
       let previewHtml = combinedHtml;
-
-      // Preview substitution based on first page values
-      const firstPageBytes = pageHtmls[0].jpegBytes;
-      try {
-        const analysisPrompt = "Return JSON list of {'field_name': '...', 'value': '...'}";
-        const analysisRes = await callLangChainAgent('invoice', 'Replication PDF Analysis Agent', analysisPrompt, null, firstPageBytes, "application/json");
-        let fieldData = safeJsonParse(analysisRes, []);
-        if (fieldData && typeof fieldData === 'object') {
-          if (Array.isArray(fieldData.fields)) fieldData = fieldData.fields;
-        }
-
-        if (Array.isArray(fieldData)) {
-          for (const item of fieldData) {
-            const placeholder = `{{${item.field_name}}}`;
-            if (item.value) {
-              previewHtml = previewHtml.split(placeholder).join(String(item.value));
-            }
-          }
-        }
-      } catch (mapErr) {
-        console.warn("[WARNING] Preview mapping failed on multi-page PDF:", mapErr.message);
-      }
+      console.log("[INFO] PDF HTML replica compiled successfully");
 
       console.log("=" * 50);
       console.log("[BACKEND] --- REPLICA GENERATION COMPLETE (PDF) ---");
@@ -576,28 +555,29 @@ router.post('/replicate-invoice', upload.single('image'), async (req, res) => {
 
       console.log("[INFO] Generating preview with sample values...");
       let previewHtml = htmlContent;
-      try {
-        const analysisPrompt = (
-          "Look at this document image and extract the current values of all dynamic fields. " +
-          "Return ONLY a JSON list of objects with keys 'field_name' and 'value'. " +
-          "field_name should be the visible text label (e.g. 'Invoice Number', 'Ship To'). " +
-          "Example: [{'field_name': 'Invoice Number', 'value': 'INV-2024-001'}, ...]"
-        );
-        const analysisRes = await callLangChainAgent(
-          'invoice',
-          'Replication Image Value Extraction Agent',
-          analysisPrompt,
-          null,
-          imgBytes,
-          "application/json"
-        );
-        let fieldData = safeJsonParse(analysisRes, []);
-        if (fieldData && typeof fieldData === 'object') {
-          if (Array.isArray(fieldData.fields)) fieldData = fieldData.fields;
-        }
+      const sampleDict: Record<string, string> = {
+        invoiceNumber: "04365695",
+        invoice_number: "04365695",
+        invoiceDate: "Jul 22, 2026",
+        invoice_date: "Jul 22, 2026",
+        dueDate: "Aug 21, 2026",
+        due_date: "Aug 21, 2026",
+        customerNumber: "507266",
+        customer_number: "507266",
+        referenceNumber: "00534-00248",
+        reference_number: "00534-00248",
+        customerName: "JENNIFER DOMINIK",
+        customer_name: "JENNIFER DOMINIK",
+        vendorName: "STAPLES NL",
+        vendor_name: "STAPLES NL",
+      };
+      for (const [k, v] of Object.entries(sampleDict)) {
+        previewHtml = previewHtml.split(`{{${k}}}`).join(v);
+      }
 
+      try {
         // Initialize preview context with mock looping and flat data
-        const previewContext = {
+        const previewContext: Record<string, any> = {
           invoiceNumber: "04365695",
           invoice_number: "04365695",
           invoiceDate: "Jul 22, 2026",
