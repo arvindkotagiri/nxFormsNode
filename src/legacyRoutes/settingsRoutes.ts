@@ -28,6 +28,7 @@ export async function initSettingsDb() {
       'model_zpl': 'google:gemini-3.1-pro-preview',
       'model_xdp': 'google:gemini-3.1-pro-preview',
       'model_invoice': 'google:gemini-3.1-pro-preview',
+      'model_mapping': 'google:gemini-2.5-flash-preview-05-20',
       'api_gemini': process.env.GEMINI_API_KEY || "",
       'api_openai': "",
       'api_anthropic': ""

@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getApiKey } from '../utils/llmUtils';
+import { getApiKey, getModelForProcess } from '../utils/llmUtils';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { SystemMessage, HumanMessage, AIMessage } from '@langchain/core/messages';
 import { logLLMTrace } from '../utils/langchainCompat';
@@ -27,15 +27,26 @@ router.post('/mapping-agent', async (req: Request, res: Response) => {
       chatHistory = []
     }: MappingAgentRequest = req.body;
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || (await getApiKey('gemini'));
-    console.log(`[AI Agent] Gemini API key resolved (length: ${apiKey ? apiKey.length : 0})`);
+    // Resolve model from DB settings (same pattern as other agents)
+    const modelConfig = await getModelForProcess('mapping');
+    let provider = 'google';
+    let modelName = modelConfig;
+    if (modelConfig && modelConfig.includes(':')) {
+      const parts = modelConfig.split(':');
+      provider = parts[0];
+      modelName = parts.slice(1).join(':');
+    }
+    if (!modelName) modelName = 'gemini-2.5-flash-preview-05-20';
+
+    // Resolve API key for the provider
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || (await getApiKey(provider === 'google' ? 'gemini' : provider));
+    console.log(`[AI Agent] Using model: ${modelName} (provider: ${provider}), key length: ${apiKey ? apiKey.length : 0}`);
     if (!apiKey) {
       return res.status(400).json({
         error: "GEMINI_API_KEY is not configured in .env or database settings."
       });
     }
 
-    const modelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
     let llm = new ChatGoogleGenerativeAI({
       apiKey,
       model: modelName,
@@ -133,10 +144,10 @@ ${prompt}
     try {
       result = await llm.invoke(messages);
     } catch (modelErr: any) {
-      console.warn(`[AI Agent] Model ${modelName} invocation failed, falling back to gemini-2.0-flash-lite:`, modelErr?.message);
+      console.warn(`[AI Agent] Model ${modelName} invocation failed, falling back to gemini-2.5-flash-preview-05-20:`, modelErr?.message);
       const fallbackLlm = new ChatGoogleGenerativeAI({
         apiKey,
-        model: "gemini-2.0-flash-lite",
+        model: "gemini-2.5-flash-preview-05-20",
         temperature: 0.2,
         maxOutputTokens: 2048,
       });
