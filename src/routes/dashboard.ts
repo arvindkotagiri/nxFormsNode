@@ -99,7 +99,7 @@ router.get("/", async (req, res) => {
 
     // 5️⃣ Avg Processing Time (ms)
     const avgTimeRes = await pool.query(`
-      SELECT AVG(EXTRACT(EPOCH FROM (completed_at - created_on)) * 1000) AS avg_ms
+      SELECT AVG(EXTRACT(EPOCH FROM (o.completed_at - o.created_on)) * 1000) AS avg_ms
       ${filteredFrom}
       AND o.completed_at IS NOT NULL
     `, params);
