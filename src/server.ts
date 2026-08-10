@@ -47,6 +47,7 @@ import { ensureAuditColumns } from "./db/ensureAuditColumns";
 import { initApiCatalogDb } from "./db/initApiCatalogDb";
 import observabilityRoutes from "./routes/observability";
 import ticketsRoutes from "./routes/tickets";
+import aiAgentRoutes from "./routes/aiAgent";
 import https from 'https';
 import fs from 'fs';
 import path from "path";
@@ -93,6 +94,10 @@ app.use("/simulation", simulationRoutes);
 app.use("/api/simulation", simulationRoutes);
 app.use("/image-retention", imageRetentionRoutes);
 app.use("/api/image-retention", imageRetentionRoutes);
+app.use("/api/observability", observabilityRoutes);
+app.use("/api/support", ticketsRoutes);
+app.use("/api/ai", aiAgentRoutes);
+
 app.use("/", dbRoutes);
 app.use("/api", dbRoutes);
 app.use("/", labelRoutes);
@@ -111,11 +116,6 @@ app.use("/api", apiMasterRoutes);
 app.use("/", printerRoutes);
 app.use("/api", printerRoutes);
 app.use("/api", legacyImageRetentionRoutes);
-import aiAgentRoutes from "./routes/aiAgent";
-
-app.use("/api/observability", observabilityRoutes);
-app.use("/api/support", ticketsRoutes);
-app.use("/api/ai", aiAgentRoutes);
 
 // Health check (matches your FastAPI /health)
 app.get(["/health", "/api/health"], async (_req, res) => {
