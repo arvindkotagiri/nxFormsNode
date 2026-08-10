@@ -34,10 +34,10 @@ router.post('/mapping-agent', async (req: Request, res: Response) => {
       });
     }
 
-    // Try primary flash model requested, fallback to gemini-1.5-flash if model name is unrecognized
+    const modelName = process.env.GEMINI_MODEL || "gemini-3.5-flash";
     let llm = new ChatGoogleGenerativeAI({
       apiKey,
-      model: "gemini-1.5-flash",
+      model: modelName,
       temperature: 0.2,
       maxOutputTokens: 2048,
     });
@@ -127,8 +127,20 @@ ${prompt}
       messages.push(new HumanMessage(contextStr));
     }
 
-    console.log(`[AI Agent] Calling LangChain Gemini Flash model for prompt: "${prompt.substring(0, 50)}..."`);
-    const result = await llm.invoke(messages);
+    console.log(`[AI Agent] Calling LangChain Gemini Flash model (${modelName}) for prompt: "${prompt.substring(0, 50)}..."`);
+    let result;
+    try {
+      result = await llm.invoke(messages);
+    } catch (modelErr: any) {
+      console.warn(`[AI Agent] Model ${modelName} invocation failed, falling back to gemini-1.5-flash:`, modelErr?.message);
+      const fallbackLlm = new ChatGoogleGenerativeAI({
+        apiKey,
+        model: "gemini-1.5-flash",
+        temperature: 0.2,
+        maxOutputTokens: 2048,
+      });
+      result = await fallbackLlm.invoke(messages);
+    }
     const rawContent = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
 
     // Clean JSON fences if any
