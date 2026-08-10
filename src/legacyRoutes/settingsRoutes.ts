@@ -171,23 +171,42 @@ async function buildModelsList(geminiKey, openaiKey, anthropicKey) {
 
   // 1. Google Gemini
   if (geminiKey) {
+    const defaultGeminiModels = [
+      { "name": "google:gemini-3.5-flash", "display_name": "Google: Gemini 3.5 Flash", "provider": "google" },
+      { "name": "google:gemini-2.5-flash", "display_name": "Google: Gemini 2.5 Flash", "provider": "google" },
+      { "name": "google:gemini-2.0-flash", "display_name": "Google: Gemini 2.0 Flash", "provider": "google" },
+      { "name": "google:gemini-1.5-flash", "display_name": "Google: Gemini 1.5 Flash", "provider": "google" },
+      { "name": "google:gemini-1.5-pro", "display_name": "Google: Gemini 1.5 Pro", "provider": "google" }
+    ];
+
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiKey}`;
       const response = await axios.get(url, { timeout: 10000 });
       const models = response.data.models || [];
+      const fetched: any[] = [];
       for (const m of models) {
         const methods = m.supportedGenerationMethods || [];
         if (methods.includes('generateContent') || m.name.toLowerCase().includes('gemini')) {
           const shortName = m.name.replace("models/", "");
-          allModels.push({
+          fetched.push({
             "name": `google:${shortName}`,
             "display_name": `Google: ${m.displayName || shortName}`,
             "provider": "google"
           });
         }
       }
-    } catch (e) {
+      if (fetched.length > 0) {
+        // Guarantee google:gemini-3.5-flash is present at top if missing
+        if (!fetched.some(m => m.name === 'google:gemini-3.5-flash')) {
+          fetched.unshift({ "name": "google:gemini-3.5-flash", "display_name": "Google: Gemini 3.5 Flash", "provider": "google" });
+        }
+        allModels.push(...fetched);
+      } else {
+        allModels.push(...defaultGeminiModels);
+      }
+    } catch (e: any) {
       console.error("Gemini Fetch Error:", e.message);
+      allModels.push(...defaultGeminiModels);
     }
   }
 
@@ -207,46 +226,46 @@ async function buildModelsList(geminiKey, openaiKey, anthropicKey) {
       { "name": "anthropic:claude-opus-4-6", "display_name": "Anthropic: Claude Opus 4.6", "provider": "anthropic" },
       { "name": "anthropic:claude-haiku-4-5-20251001", "display_name": "Anthropic: Claude Haiku 4.5", "provider": "anthropic" },
       { "name": "anthropic:claude-sonnet-4-20250514", "display_name": "Anthropic: Claude Sonnet 4 (stable)", "provider": "anthropic" }
-    );
-  }
-
-  return allModels;
-}
-
-router.get('/available-models', async (req, res) => {
-  try {
-    const geminiKey = (await getApiKeyHelper('gemini')) || process.env.GEMINI_API_KEY || "";
-    const openaiKey = await getApiKeyHelper('openai');
-    const anthropicKey = await getApiKeyHelper('anthropic');
-    const models = await buildModelsList(geminiKey, openaiKey, anthropicKey);
-    res.json(models);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/available-models', async (req, res) => {
-  try {
-    const data = req.body || {};
-    const geminiKey = data.api_gemini || (await getApiKeyHelper('gemini')) || process.env.GEMINI_API_KEY || "";
-    const openaiKey = data.api_openai || (await getApiKeyHelper('openai'));
-    const anthropicKey = data.api_anthropic || (await getApiKeyHelper('anthropic'));
-    const models = await buildModelsList(geminiKey, openaiKey, anthropicKey);
-    res.json(models);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.get('/model-configs', async (req, res) => {
-  try {
-    const query = "SELECT key, value FROM system_settings WHERE key LIKE 'model_%' OR key LIKE 'api_%' OR key LIKE 'agent_%'";
-    const result = await pool.query(query);
-    const configMap = {};
-    for (const row of result.rows) {
-      configMap[row.key] = row.value;
+      );
     }
-    res.json(configMap);
+
+    return allModels;
+  }
+
+  router.get('/available-models', async (req, res) => {
+    try {
+      const geminiKey = (await getApiKeyHelper('gemini')) || process.env.GEMINI_API_KEY || "";
+      const openaiKey = await getApiKeyHelper('openai');
+      const anthropicKey = await getApiKeyHelper('anthropic');
+      const models = await buildModelsList(geminiKey, openaiKey, anthropicKey);
+      res.json(models);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/available-models', async (req, res) => {
+    try {
+      const data = req.body || {};
+      const geminiKey = data.api_gemini || (await getApiKeyHelper('gemini')) || process.env.GEMINI_API_KEY || "";
+      const openaiKey = data.api_openai || (await getApiKeyHelper('openai'));
+      const anthropicKey = data.api_anthropic || (await getApiKeyHelper('anthropic'));
+      const models = await buildModelsList(geminiKey, openaiKey, anthropicKey);
+      res.json(models);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get('/model-configs', async (req, res) => {
+    try {
+      const query = "SELECT key, value FROM system_settings WHERE key LIKE 'model_%' OR key LIKE 'api_%' OR key LIKE 'agent_%'";
+      const result = await pool.query(query);
+      const configMap = {};
+      for (const row of result.rows) {
+        configMap[row.key] = row.value;
+      }
+      res.json(configMap);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

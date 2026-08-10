@@ -75,20 +75,14 @@ export class ChatModel {
     try {
       if (this.provider === 'google') {
         const apiKey = await getApiKey('gemini');
-        let targetModel = this.modelId || 'gemini-1.5-flash';
-        if (targetModel.includes('3.5') || (!targetModel.includes('1.5') && !targetModel.includes('2.0') && !targetModel.includes('flash') && !targetModel.includes('pro'))) {
-          targetModel = 'gemini-1.5-flash';
-        }
-
+        let requestedModel = (this.modelId || 'gemini-3.5-flash').replace(/^google:/, '').trim();
         const genAI = new GoogleGenerativeAI(apiKey);
-        let model = genAI.getGenerativeModel({ model: targetModel });
 
         const system = messages.find(m => m.role === 'system')?.content;
         const userMsgs = messages.filter(m => m.role !== 'system');
 
         const contents = userMsgs.map(m => {
           const parts: any[] = [{ text: m.content }];
-          // Only add image to the user's message
           if (m.role === 'user' && options?.imageBytes) {
             parts.unshift({
               inlineData: {
@@ -113,14 +107,34 @@ export class ChatModel {
           payload.systemInstruction = system;
         }
 
+        const candidateModels = Array.from(new Set([
+          requestedModel,
+          'gemini-3.5-flash',
+          'gemini-2.5-flash',
+          'gemini-2.0-flash',
+          'gemini-1.5-flash-latest',
+          'gemini-1.5-flash',
+          'gemini-1.5-pro'
+        ]));
+
         let res;
-        try {
-          res = await model.generateContent(payload);
-        } catch (mErr) {
-          console.warn(`[ChatModel] ${targetModel} generateContent failed, retrying with gemini-1.5-flash`);
-          const fbModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-          res = await fbModel.generateContent(payload);
+        let lastError;
+        for (const mName of candidateModels) {
+          try {
+            console.log(`[ChatModel] Trying model: ${mName}`);
+            const model = genAI.getGenerativeModel({ model: mName });
+            res = await model.generateContent(payload);
+            break;
+          } catch (mErr: any) {
+            console.warn(`[ChatModel] ${mName} failed (${mErr?.message || mErr}), trying next candidate...`);
+            lastError = mErr;
+          }
         }
+
+        if (!res) {
+          throw lastError || new Error("All Gemini model candidates failed.");
+        }
+
         responseText = res.response.text();
         pTokens = res.response.usageMetadata?.promptTokenCount || 0;
         cTokens = res.response.usageMetadata?.candidatesTokenCount || 0;

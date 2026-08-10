@@ -248,13 +248,8 @@ function repairJson(jsonStr) {
 }
 
 async function callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType) {
-  let targetModel = modelId || 'gemini-1.5-flash';
-  if (targetModel.includes('3.5') || (!targetModel.includes('1.5') && !targetModel.includes('2.0') && !targetModel.includes('flash') && !targetModel.includes('pro'))) {
-    targetModel = 'gemini-1.5-flash';
-  }
-
+  let requestedModel = (modelId || 'gemini-3.5-flash').replace(/^google:/, '').trim();
   const genAI = new GoogleGenerativeAI(apiKey);
-  let model = genAI.getGenerativeModel({ model: targetModel });
 
   const parts = [];
   if (imageBytes) {
@@ -288,20 +283,32 @@ async function callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes
     options.systemInstruction = systemInstruction;
   }
 
-  console.log(`   [GEMINI] Sending content to ${targetModel} (Image: ${!!imageBytes})`);
-  let response;
-  try {
-    response = await model.generateContent(options);
-  } catch (err) {
-    console.warn(`   [GEMINI] Warning: ${targetModel} failed (${err?.message}), falling back to gemini-1.5-flash`);
-    const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    response = await fallbackModel.generateContent(options);
+  const candidateModels = Array.from(new Set([
+    requestedModel,
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro'
+  ]));
+
+  let lastError;
+  for (const mName of candidateModels) {
+    try {
+      console.log(`   [GEMINI] Sending content to ${mName} (Image: ${!!imageBytes})`);
+      const model = genAI.getGenerativeModel({ model: mName });
+      const response = await model.generateContent(options);
+      const result = response.response.text().trim();
+      console.log(`    [GEMINI] Success with ${mName} (${result.length} chars)`);
+      return result;
+    } catch (err) {
+      console.warn(`   [GEMINI] Warning: ${mName} failed (${err?.message || err}), trying next candidate...`);
+      lastError = err;
+    }
   }
 
-  const result = response.response.text().trim();
-  console.log(`    [GEMINI] Response received (${result.length} chars)`);
-  console.log(`    [DEBUG] Response preview: ${result.substring(0, 100)}...`);
-  return result;
+  throw lastError || new Error("All Gemini model candidates failed.");
 }
 
 async function callOpenAI(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType) {
