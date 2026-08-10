@@ -248,8 +248,13 @@ function repairJson(jsonStr) {
 }
 
 async function callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType) {
+  let targetModel = modelId || 'gemini-1.5-flash';
+  if (targetModel.includes('3.5') || (!targetModel.includes('1.5') && !targetModel.includes('2.0') && !targetModel.includes('flash') && !targetModel.includes('pro'))) {
+    targetModel = 'gemini-1.5-flash';
+  }
+
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: modelId });
+  let model = genAI.getGenerativeModel({ model: targetModel });
 
   const parts = [];
   if (imageBytes) {
@@ -283,8 +288,16 @@ async function callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes
     options.systemInstruction = systemInstruction;
   }
 
-  console.log(`   [GEMINI] Sending content to ${modelId} (Image: ${!!imageBytes})`);
-  const response = await model.generateContent(options);
+  console.log(`   [GEMINI] Sending content to ${targetModel} (Image: ${!!imageBytes})`);
+  let response;
+  try {
+    response = await model.generateContent(options);
+  } catch (err) {
+    console.warn(`   [GEMINI] Warning: ${targetModel} failed (${err?.message}), falling back to gemini-1.5-flash`);
+    const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    response = await fallbackModel.generateContent(options);
+  }
+
   const result = response.response.text().trim();
   console.log(`    [GEMINI] Response received (${result.length} chars)`);
   console.log(`    [DEBUG] Response preview: ${result.substring(0, 100)}...`);

@@ -75,8 +75,13 @@ export class ChatModel {
     try {
       if (this.provider === 'google') {
         const apiKey = await getApiKey('gemini');
+        let targetModel = this.modelId || 'gemini-1.5-flash';
+        if (targetModel.includes('3.5') || (!targetModel.includes('1.5') && !targetModel.includes('2.0') && !targetModel.includes('flash') && !targetModel.includes('pro'))) {
+          targetModel = 'gemini-1.5-flash';
+        }
+
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: this.modelId });
+        let model = genAI.getGenerativeModel({ model: targetModel });
 
         const system = messages.find(m => m.role === 'system')?.content;
         const userMsgs = messages.filter(m => m.role !== 'system');
@@ -108,7 +113,14 @@ export class ChatModel {
           payload.systemInstruction = system;
         }
 
-        const res = await model.generateContent(payload);
+        let res;
+        try {
+          res = await model.generateContent(payload);
+        } catch (mErr) {
+          console.warn(`[ChatModel] ${targetModel} generateContent failed, retrying with gemini-1.5-flash`);
+          const fbModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+          res = await fbModel.generateContent(payload);
+        }
         responseText = res.response.text();
         pTokens = res.response.usageMetadata?.promptTokenCount || 0;
         cTokens = res.response.usageMetadata?.candidatesTokenCount || 0;
