@@ -157,12 +157,15 @@ app.get(/.*/, (req, res, next) => {
 
 const port = Number(process.env.PORT || 4000);
 
+import { restoreSalesOrderV2Templates } from "./update_sales_order_v2";
+
 async function startServer() {
   try {
     await initSettingsDb();
     await initImageDb();
     await ensureAuditColumns();
     await initApiCatalogDb();
+    await restoreSalesOrderV2Templates();
 
     if (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
       const options = {
