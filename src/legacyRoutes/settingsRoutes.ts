@@ -12,10 +12,9 @@ dotenv.config();
 const router = express.Router();
 
 export async function initSettingsDb() {
-  const client = await pool.connect();
   try {
     // 1. Create system_settings
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS system_settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -35,14 +34,14 @@ export async function initSettingsDb() {
     };
 
     for (const [key, val] of Object.entries(defaults)) {
-      await client.query(
+      await pool.query(
         "INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING",
         [key, val]
       );
     }
 
     // 2. Create label_master
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS label_master (
         uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         label_id TEXT,
@@ -67,7 +66,7 @@ export async function initSettingsDb() {
     ];
 
     for (const [colName, colType] of columnsToAdd) {
-      await client.query(`
+      await pool.query(`
         DO $$ 
         BEGIN 
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
@@ -79,7 +78,7 @@ export async function initSettingsDb() {
     }
 
     // 3. Create custom_fonts
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS custom_fonts (
         id SERIAL PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
@@ -89,7 +88,7 @@ export async function initSettingsDb() {
     `);
 
     // 4. Create llm_traces table for observability
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS llm_traces (
         id SERIAL PRIMARY KEY,
         trace_id VARCHAR(50),
@@ -107,7 +106,7 @@ export async function initSettingsDb() {
     `);
 
     // 5. Create support_tickets table for support ticket tracking
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS support_tickets (
         id SERIAL PRIMARY KEY,
         ticket_id VARCHAR(50) UNIQUE,
@@ -129,7 +128,7 @@ export async function initSettingsDb() {
     `);
 
     // Ensure screenshot column exists (migration helper for existing DB instances)
-    await client.query(`
+    await pool.query(`
       DO $$ 
       BEGIN 
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
@@ -142,8 +141,6 @@ export async function initSettingsDb() {
     console.log("[INIT] System settings, label tables, observability, and tickets DB verified/created successfully.");
   } catch (err) {
     console.error("[INIT ERROR] Failed to initialize system settings DB:", err);
-  } finally {
-    client.release();
   }
 }
 

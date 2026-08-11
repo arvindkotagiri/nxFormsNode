@@ -10,9 +10,8 @@ const upload = multer({
 });
 
 export async function initImageDb() {
-  const client = await pool.connect();
   try {
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS image_master (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -27,8 +26,6 @@ export async function initImageDb() {
     console.log("[INIT] image_master table verified/created in database");
   } catch (err) {
     console.error("[INIT ERROR] Failed to initialize image master database:", err);
-  } finally {
-    client.release();
   }
 }
 
