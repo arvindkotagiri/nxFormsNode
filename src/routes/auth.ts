@@ -111,7 +111,7 @@ router.post("/login", async (req, res) => {
   const { email, password } = parsed.data;
 
   const result = await pool.query(
-    `SELECT id::text, email, name, first_name, last_name, organization, tenant_id, status, role, password_hash, encrypted_payload, ${AUDIT_SELECT_SQL}
+    `SELECT id::text, email, name, first_name, last_name, organization, tenant_id, status, role, password_hash, encrypted_payload, ${auditSelectSql()}
      FROM users
      WHERE LOWER(email) = LOWER($1)`,
     [email]

@@ -185,8 +185,8 @@ async function startServer() {
         console.log('API running on https://localhost:443');
       });
     } else {
-      app.listen(port, () => {
-        console.log(`API running on http://localhost:${port}`);
+      app.listen(port, "0.0.0.0", () => {
+        console.log(`API running on http://0.0.0.0:${port}`);
       });
     }
   } catch (err) {
