@@ -59,46 +59,23 @@ router.get("/", async (req, res) => {
       WHERE ${where.join(" AND ")}
     `;
 
-    // 1️⃣ Total Outputs Today
-    const totalOutTodayRes = await pool.query(`
-      SELECT COUNT(*) AS total
+    // 1️⃣ Aggregate all KPI metrics in a single query
+    const kpiRes = await pool.query(`
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE o.status = 'Success') AS success,
+        COUNT(*) FILTER (WHERE o.status = 'Failed') AS failed,
+        COUNT(*) FILTER (WHERE o.status = 'Pending') AS pending,
+        AVG(COALESCE(o.duration, 0)) AS avg_ms
       ${filteredFrom}
     `, params);
-    const totalOutputsToday = Number(totalOutTodayRes.rows[0].total);
 
-    // 2️⃣ Processed Successfully
-    const successRes = await pool.query(`
-      SELECT COUNT(*) AS total
-      ${filteredFrom}
-      AND o.status = 'Success'
-    `, params);
-    const processedSuccessfully = Number(successRes.rows[0].total);
-
-    // 3️⃣ Failed
-    const failedRes = await pool.query(`
-      SELECT COUNT(*) AS total
-      ${filteredFrom}
-      AND o.status = 'Failed'
-    `, params);
-    const failed = Number(failedRes.rows[0].total);
-
-    // 4️⃣ Pending
-    const pendingRes = await pool.query(`
-      SELECT COUNT(*) AS total
-      ${filteredFrom}
-      AND o.status = 'Pending'
-    `, params);
-    const pending = Number(pendingRes.rows[0].total);
-
-    // 5️⃣ Avg Processing Time (ms)
-    const avgTimeRes = await pool.query(`
-      SELECT AVG(COALESCE(o.duration, 0)) AS avg_ms
-      ${filteredFrom}
-      AND o.created_on IS NOT NULL
-    `, params);
-    const avgProcessingTime = avgTimeRes.rows[0].avg_ms
-      ? `${Math.round(avgTimeRes.rows[0].avg_ms)}ms`
-      : "0ms";
+    const kpiRow = kpiRes.rows[0] || {};
+    const totalOutputsToday = Number(kpiRow.total || 0);
+    const processedSuccessfully = Number(kpiRow.success || 0);
+    const failed = Number(kpiRow.failed || 0);
+    const pending = Number(kpiRow.pending || 0);
+    const avgProcessingTime = kpiRow.avg_ms ? `${Math.round(Number(kpiRow.avg_ms))}ms` : "0ms";
 
     // KPI Cards
     const kpiCards = [
