@@ -32,6 +32,7 @@ router.get("/", async (req, res) => {
         ${AUDIT_SELECT_SQL}
       FROM events
       ORDER BY event_timestamp DESC
+      LIMIT 200
     `);
 
     const formatted = result.rows.map((r) => {

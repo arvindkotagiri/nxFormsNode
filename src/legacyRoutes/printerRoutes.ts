@@ -107,6 +107,56 @@ router.delete('/printers/:printer_id', async (req, res) => {
   }
 });
 
+router.post(['/printers/:printer_id', '/api/printers/:printer_id'], async (req, res) => {
+  try {
+    const { printer_id } = req.params;
+    const data = req.body || {};
+    const name = data.name;
+    const ip_address = data.ip_address;
+    const site_id = data.site_id;
+    const printer_type = data.type || 'ZEBRA';
+
+    await pool.query(
+      `UPDATE printer_master
+       SET name = COALESCE($1, name),
+           ip_address = COALESCE($2, ip_address),
+           site_id = COALESCE($3, site_id),
+           type = COALESCE($4, type)
+       WHERE id = $5`,
+      [name, ip_address, site_id, printer_type, printer_id]
+    );
+
+    res.status(200).json({ status: "success" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put(['/printers/:printer_id', '/api/printers/:printer_id'], async (req, res) => {
+  try {
+    const { printer_id } = req.params;
+    const data = req.body || {};
+    const name = data.name;
+    const ip_address = data.ip_address;
+    const site_id = data.site_id;
+    const printer_type = data.type || 'ZEBRA';
+
+    await pool.query(
+      `UPDATE printer_master
+       SET name = COALESCE($1, name),
+           ip_address = COALESCE($2, ip_address),
+           site_id = COALESCE($3, site_id),
+           type = COALESCE($4, type)
+       WHERE id = $5`,
+      [name, ip_address, site_id, printer_type, printer_id]
+    );
+
+    res.status(200).json({ status: "success" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/print-zpl', async (req, res) => {
   try {
     const data = req.body || {};

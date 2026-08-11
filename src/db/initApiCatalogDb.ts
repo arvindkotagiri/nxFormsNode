@@ -148,13 +148,29 @@ export async function populateEmptyGetUrls() {
 export async function initApiCatalogDb(): Promise<void> {
   const client = await pool.connect();
   try {
+    // 0. Create organizations table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS organizations (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        tenant_prefix TEXT NOT NULL,
+        current_counter INT DEFAULT 0,
+        created_on TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
     // 1. Create users table
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         email TEXT UNIQUE NOT NULL,
         name TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'viewer',
+        first_name TEXT,
+        last_name TEXT,
+        organization TEXT,
+        tenant_id TEXT,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        role TEXT NOT NULL DEFAULT 'developer',
         password_hash TEXT NOT NULL,
         encrypted_payload TEXT,
         created_by TEXT,
@@ -164,17 +180,55 @@ export async function initApiCatalogDb(): Promise<void> {
       );
     `);
 
-    // Seed default configurator user if none exist
-    const userCheck = await client.query("SELECT 1 FROM users LIMIT 1");
-    if (userCheck.rowCount === 0) {
-      const passwordHash = await hashPassword("pass1234");
-      await client.query(
-        `INSERT INTO users (email, name, role, password_hash, created_by, created_on, updated_by, updated_on)
-         VALUES ($1, $2, $3, $4, 'system', NOW(), 'system', NOW())`,
-        ["configurator@test.com", "Configurator", "configurator", passwordHash]
-      );
-      console.log("[db] Seeded default configurator user");
+    // Drop legacy role check constraint if it exists to allow new roles (admin, manager, developer, operator, viewer)
+    await client.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;`);
+
+    // Add missing user columns if users table pre-existed
+    const userCols = [
+      ["first_name", "TEXT"],
+      ["last_name", "TEXT"],
+      ["organization", "TEXT"],
+      ["tenant_id", "TEXT"],
+      ["status", "TEXT DEFAULT 'PENDING'"]
+    ];
+    for (const [col, colType] of userCols) {
+      await client.query(`
+        DO $$ 
+        BEGIN 
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='${col}') THEN
+            ALTER TABLE users ADD COLUMN ${col} ${colType};
+          END IF;
+        END $$;
+      `);
     }
+
+    // Ensure default admin user admin@mygo.ai / mygo12345 exists and is APPROVED
+    const adminCheck = await client.query("SELECT id FROM users WHERE email = $1", ["admin@mygo.ai"]);
+    const adminPassHash = await hashPassword("mygo12345");
+    if (adminCheck.rowCount === 0) {
+      await client.query(
+        `INSERT INTO users (email, name, first_name, last_name, organization, tenant_id, role, status, password_hash, created_by, created_on, updated_by, updated_on)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'system', NOW(), 'system', NOW())`,
+        ["admin@mygo.ai", "System Admin", "System", "Admin", "MyGo", "ADMIN-MYGO-0000", "admin", "APPROVED", adminPassHash]
+      );
+      console.log("[db] Seeded default admin user (admin@mygo.ai)");
+    } else {
+      // Ensure existing admin user has status APPROVED and role admin
+      await client.query(
+        `UPDATE users SET status = 'APPROVED', role = 'admin', tenant_id = COALESCE(tenant_id, 'ADMIN-MYGO-0000') WHERE email = 'admin@mygo.ai'`
+      );
+    }
+
+    // Ensure label_master has tenant_id column and existing templates belong to admin tenant
+    await client.query(`
+      DO $$ 
+      BEGIN 
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='label_master' AND column_name='tenant_id') THEN
+          ALTER TABLE label_master ADD COLUMN tenant_id TEXT;
+        END IF;
+      END $$;
+    `);
+    await client.query(`UPDATE label_master SET tenant_id = 'ADMIN-MYGO-0000' WHERE tenant_id IS NULL`);
 
     // 2. Create events table
     await client.query(`

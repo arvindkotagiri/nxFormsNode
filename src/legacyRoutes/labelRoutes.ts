@@ -6,6 +6,29 @@ const router = express.Router();
 
 router.get(['/labels', '/api/labels'], async (req, res) => {
   try {
+    let tenantFilter = "";
+    const params: any[] = [];
+
+    // Optional user token extraction to filter by tenant_id
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      try {
+        const { verifyToken } = require('../utils/jwt');
+        const token = authHeader.slice(7).trim();
+        const decoded = verifyToken(token);
+        if (decoded?.sub) {
+          const userRes = await pool.query('SELECT role, tenant_id FROM users WHERE id = $1', [decoded.sub]);
+          const user = userRes.rows[0];
+          if (user && user.role !== 'admin' && user.tenant_id) {
+            tenantFilter = "WHERE tenant_id = $1";
+            params.push(user.tenant_id);
+          }
+        }
+      } catch (tokenErr) {
+        // Continue without filter if token is invalid or missing
+      }
+    }
+
     const query = `
       SELECT 
         uuid,
@@ -22,12 +45,16 @@ router.get(['/labels', '/api/labels'], async (req, res) => {
         created_on,
         page_dimensions,
         output_mode,
-        xdp_code
+        xdp_code,
+        tenant_id,
+        table_config
       FROM label_master
-      ORDER BY created_on DESC;
+      ${tenantFilter}
+      ORDER BY created_on DESC
+      LIMIT 100;
     `;
 
-    const result = await pool.query(query);
+    const result = await pool.query(query, params);
     res.setHeader("Cache-Control", "no-store");
     res.status(200).json(result.rows);
   } catch (err) {

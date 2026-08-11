@@ -70,9 +70,31 @@ router.post(['/save-label', '/api/save-label'], async (req, res) => {
     const output_mode = data.output_mode || '';
     const fields = JSON.stringify(data.fields || []);
     const version = data.version !== undefined ? data.version : 1.0;
-    const created_by = data.created_by || 'System';
-    const created_on = new Date();
+    
+    let created_by = data.created_by || 'System';
+    let tenant_id = data.tenant_id || null;
 
+    // Optional user token extraction to auto-set tenant_id and created_by
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      try {
+        const { verifyToken } = require('../utils/jwt');
+        const token = authHeader.slice(7).trim();
+        const decoded = verifyToken(token);
+        if (decoded?.sub) {
+          const userRes = await pool.query('SELECT email, tenant_id FROM users WHERE id = $1', [decoded.sub]);
+          const user = userRes.rows[0];
+          if (user) {
+            created_by = user.email;
+            if (!tenant_id && user.tenant_id) tenant_id = user.tenant_id;
+          }
+        }
+      } catch (tokenErr) {}
+    }
+
+    if (!tenant_id) tenant_id = 'ADMIN-MYGO-0000';
+
+    const created_on = new Date();
     const table_config = data.table_config ? JSON.stringify(data.table_config) : null;
 
     if (uuid) {
@@ -90,15 +112,16 @@ router.post(['/save-label', '/api/save-label'], async (req, res) => {
           page_dimensions = $8,
           output_mode = $9,
           xdp_code = $10,
-          table_config = $11
-        WHERE uuid = $12
+          table_config = $11,
+          tenant_id = COALESCE($12, tenant_id)
+        WHERE uuid = $13
         RETURNING uuid;
       `;
       const values = [
         label_name, context, field_mapping,
         bar_code_type, zpl_code, fields,
         html_code, page_dimensions, output_mode, xdp_code, table_config,
-        uuid
+        tenant_id, uuid
       ];
       const result = await pool.query(updateQuery, values);
       if (result.rowCount > 0) {
@@ -111,9 +134,9 @@ router.post(['/save-label', '/api/save-label'], async (req, res) => {
         label_id, label_name, context, field_mapping, 
         bar_code_type, zpl_code, fields, version, 
         created_by, created_on,
-        html_code, page_dimensions, output_mode, xdp_code, table_config
+        html_code, page_dimensions, output_mode, xdp_code, table_config, tenant_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING uuid;
     `;
 
@@ -121,7 +144,7 @@ router.post(['/save-label', '/api/save-label'], async (req, res) => {
       label_id, label_name, context, field_mapping,
       bar_code_type, zpl_code, fields, version,
       created_by, created_on,
-      html_code, page_dimensions, output_mode, xdp_code, table_config
+      html_code, page_dimensions, output_mode, xdp_code, table_config, tenant_id
     ];
 
     const result = await pool.query(insertQuery, values);

@@ -23,13 +23,13 @@ router.get("/", async (req, res) => {
         o.retries,
         o.duration,
         o.error_message,
-        o.rendered_output,
         o.encrypted_payload,
         o.output_number,
         ${auditSelectSql("o")}
       FROM outputs o
       JOIN events e ON o.event_id = e.event_id
       ORDER BY e.event_number DESC, o.output_number DESC
+      LIMIT 200
     `);
 
     const formatted = result.rows.map((r) => {
@@ -53,7 +53,7 @@ router.get("/", async (req, res) => {
         retries: decryptedPayload?.retries ?? r.retries,
         duration: r.duration ? `${r.duration}ms` : "–",
         errorMessage: decryptedPayload?.error_message ?? r.error_message,
-        renderedOutput: decryptedPayload?.rendered_output ?? r.rendered_output,
+        renderedOutput: decryptedPayload?.rendered_output ?? null,
         outputNumber: r.output_number,
         created_by: r.created_by,
         created_on: r.created_on,
@@ -66,6 +66,75 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch outputs" });
+  }
+});
+
+/**
+ * GET /api/outputs/:id
+ * Fetches single output with rendered_output payload
+ */
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `
+      SELECT
+        o.output_id,
+        o.event_id,
+        e.event_number,
+        o.form_id,
+        o.printer,
+        o.format,
+        o.status,
+        o.retries,
+        o.duration,
+        o.error_message,
+        o.rendered_output,
+        o.encrypted_payload,
+        o.output_number,
+        ${auditSelectSql("o")}
+      FROM outputs o
+      JOIN events e ON o.event_id = e.event_id
+      WHERE o.output_id = $1
+    `,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Output not found" });
+    }
+
+    const r = result.rows[0];
+    let decryptedPayload: any = null;
+    if (r.encrypted_payload) {
+      try {
+        decryptedPayload = maybeDecryptPayload(r.encrypted_payload) as any;
+      } catch (err) {
+        console.warn("Failed to decrypt output payload:", err);
+      }
+    }
+
+    res.json({
+      id: r.output_id,
+      eventId: r.event_id,
+      evt_no: r.event_number,
+      formId: r.form_id,
+      printer: decryptedPayload?.printer ?? r.printer,
+      format: decryptedPayload?.format ?? r.format,
+      status: decryptedPayload?.status ?? r.status,
+      retries: decryptedPayload?.retries ?? r.retries,
+      duration: r.duration ? `${r.duration}ms` : "–",
+      errorMessage: decryptedPayload?.error_message ?? r.error_message,
+      renderedOutput: decryptedPayload?.rendered_output ?? r.rendered_output,
+      outputNumber: r.output_number,
+      created_by: r.created_by,
+      created_on: r.created_on,
+      updated_by: r.updated_by,
+      updated_on: r.updated_on,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch output detail" });
   }
 });
 

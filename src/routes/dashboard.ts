@@ -149,7 +149,7 @@ router.get("/", async (req, res) => {
              AVG(EXTRACT(EPOCH FROM (o.completed_at - o.created_on)) * 1000) AS avg_ms
       ${filteredFrom}
       AND o.completed_at IS NOT NULL
-      GROUP BY hour
+      GROUP BY date_trunc('hour', o.created_on)
       ORDER BY hour
     `, params);
     const timeTrend = timeTrendRes.rows.map((r: any) => ({
