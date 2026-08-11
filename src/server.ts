@@ -170,11 +170,11 @@ import { restoreSalesOrderV2Templates } from "./update_sales_order_v2";
 
 async function startServer() {
   try {
-    await initSettingsDb();
-    await initImageDb();
-    await ensureAuditColumns();
-    await initApiCatalogDb();
-    await restoreSalesOrderV2Templates();
+    try { await initSettingsDb(); } catch (e) { console.error("[INIT] initSettingsDb error:", e); }
+    try { await initImageDb(); } catch (e) { console.error("[INIT] initImageDb error:", e); }
+    try { await ensureAuditColumns(); } catch (e) { console.error("[INIT] ensureAuditColumns error:", e); }
+    try { await initApiCatalogDb(); } catch (e) { console.error("[INIT] initApiCatalogDb error:", e); }
+    try { await restoreSalesOrderV2Templates(); } catch (e) { console.error("[INIT] restoreSalesOrderV2Templates error:", e); }
 
     if (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
       const options = {
@@ -186,12 +186,11 @@ async function startServer() {
       });
     } else {
       app.listen(port, "0.0.0.0", () => {
-        console.log(`API running on http://0.0.0.0:${port}`);
+        console.log(`[SERVER RUNNING] API running on http://0.0.0.0:${port}`);
       });
     }
   } catch (err) {
     console.error("[CRITICAL ERROR] Failed to initialize backend:", err);
-    process.exit(1);
   }
 }
 
