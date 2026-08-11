@@ -146,10 +146,9 @@ export async function populateEmptyGetUrls() {
 }
 
 export async function initApiCatalogDb(): Promise<void> {
-  const client = await pool.connect();
   try {
     // 0. Create organizations table
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS organizations (
         id SERIAL PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
@@ -160,7 +159,7 @@ export async function initApiCatalogDb(): Promise<void> {
     `);
 
     // 1. Create users table
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         email TEXT UNIQUE NOT NULL,
@@ -181,7 +180,7 @@ export async function initApiCatalogDb(): Promise<void> {
     `);
 
     // Drop legacy role check constraint if it exists to allow new roles (admin, manager, developer, operator, viewer)
-    await client.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;`);
+    await pool.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;`);
 
     // Add missing user columns if users table pre-existed
     const userCols = [
@@ -192,7 +191,7 @@ export async function initApiCatalogDb(): Promise<void> {
       ["status", "TEXT DEFAULT 'PENDING'"]
     ];
     for (const [col, colType] of userCols) {
-      await client.query(`
+      await pool.query(`
         DO $$ 
         BEGIN 
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='${col}') THEN
@@ -203,10 +202,10 @@ export async function initApiCatalogDb(): Promise<void> {
     }
 
     // Ensure default admin user admin@mygo.ai / mygo12345 exists and is APPROVED
-    const adminCheck = await client.query("SELECT id FROM users WHERE email = $1", ["admin@mygo.ai"]);
+    const adminCheck = await pool.query("SELECT id FROM users WHERE email = $1", ["admin@mygo.ai"]);
     const adminPassHash = await hashPassword("mygo12345");
     if (adminCheck.rowCount === 0) {
-      await client.query(
+      await pool.query(
         `INSERT INTO users (email, name, first_name, last_name, organization, tenant_id, role, status, password_hash, created_by, created_on, updated_by, updated_on)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'system', NOW(), 'system', NOW())`,
         ["admin@mygo.ai", "System Admin", "System", "Admin", "MyGo", "ADMIN-MYGO-0000", "admin", "APPROVED", adminPassHash]
@@ -214,13 +213,13 @@ export async function initApiCatalogDb(): Promise<void> {
       console.log("[db] Seeded default admin user (admin@mygo.ai)");
     } else {
       // Ensure existing admin user has status APPROVED and role admin
-      await client.query(
+      await pool.query(
         `UPDATE users SET status = 'APPROVED', role = 'admin', tenant_id = COALESCE(tenant_id, 'ADMIN-MYGO-0000') WHERE email = 'admin@mygo.ai'`
       );
     }
 
     // Ensure label_master has tenant_id column and existing templates belong to admin tenant
-    await client.query(`
+    await pool.query(`
       DO $$ 
       BEGIN 
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='label_master' AND column_name='tenant_id') THEN
@@ -228,10 +227,10 @@ export async function initApiCatalogDb(): Promise<void> {
         END IF;
       END $$;
     `);
-    await client.query(`UPDATE label_master SET tenant_id = 'ADMIN-MYGO-0000' WHERE tenant_id IS NULL`);
+    await pool.query(`UPDATE label_master SET tenant_id = 'ADMIN-MYGO-0000' WHERE tenant_id IS NULL`);
 
     // 2. Create events table
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS events (
         event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         event_number SERIAL,
@@ -257,7 +256,7 @@ export async function initApiCatalogDb(): Promise<void> {
     `);
 
     // 3. Create outputs table
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS outputs (
         output_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         event_id UUID REFERENCES events(event_id) ON DELETE CASCADE,
@@ -281,7 +280,7 @@ export async function initApiCatalogDb(): Promise<void> {
     `);
 
     // 4. Create simulation_master table
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS simulation_master (
         id SERIAL PRIMARY KEY,
         simulation_name TEXT NOT NULL,
@@ -297,7 +296,7 @@ export async function initApiCatalogDb(): Promise<void> {
     `);
 
     // 5. Create logs_audit table
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS logs_audit (
         log_id SERIAL PRIMARY KEY,
         level TEXT NOT NULL,
@@ -313,7 +312,7 @@ export async function initApiCatalogDb(): Promise<void> {
         updated_on TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS contexts (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
@@ -334,7 +333,7 @@ export async function initApiCatalogDb(): Promise<void> {
       );
     `);
 
-    await client.query(`
+    await pool.query(`
       ALTER TABLE contexts
       ADD COLUMN IF NOT EXISTS username TEXT,
       ADD COLUMN IF NOT EXISTS password TEXT,
@@ -343,12 +342,12 @@ export async function initApiCatalogDb(): Promise<void> {
       ADD COLUMN IF NOT EXISTS client NUMERIC(3);
     `);
 
-    await client.query(`
+    await pool.query(`
       ALTER TABLE contexts
       ADD COLUMN IF NOT EXISTS get_url TEXT;
     `);
 
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS api_output_definitions (
         id SERIAL PRIMARY KEY,
         context_id INTEGER UNIQUE REFERENCES contexts(id) ON DELETE CASCADE,
@@ -362,13 +361,13 @@ export async function initApiCatalogDb(): Promise<void> {
       );
     `);
 
-    const labelConfigs = await client.query(`
+    const labelConfigs = await pool.query(`
       SELECT 1 FROM information_schema.tables
       WHERE table_schema = 'public' AND table_name = 'label_configs'
       LIMIT 1
     `);
     if ((labelConfigs.rowCount ?? 0) > 0) {
-      await client.query(`
+      await pool.query(`
         ALTER TABLE label_configs
         ADD COLUMN IF NOT EXISTS output_conditions JSONB DEFAULT '{}'::jsonb
       `);
@@ -413,15 +412,15 @@ export async function initApiCatalogDb(): Promise<void> {
       ]
     });
 
-    const checkContext = await client.query("SELECT id FROM contexts WHERE name = 'Staples Purchase Order OData Service' LIMIT 1");
+    const checkContext = await pool.query("SELECT id FROM contexts WHERE name = 'Staples Purchase Order OData Service' LIMIT 1");
     if ((checkContext.rowCount ?? 0) === 0) {
-      await client.query(`
+      await pool.query(`
         INSERT INTO contexts (name, endpoint, auth_type, fields, entities, status)
         VALUES ('Staples Purchase Order OData Service', 'http://localhost:4000/api/simulation/staples-po', 'None', $1::jsonb, $2::jsonb, 'Active')
       `, [staplesFields, staplesEntities]);
     } else {
       // Force update context payload and entities structures for existing databases
-      await client.query(`
+      await pool.query(`
         UPDATE contexts 
         SET fields = $1::jsonb, entities = $2::jsonb 
         WHERE name = 'Staples Purchase Order OData Service'
@@ -429,7 +428,7 @@ export async function initApiCatalogDb(): Promise<void> {
     }
 
     // Seed Staples PO Simulation Context Payload if missing
-    const checkSimulation = await client.query("SELECT id FROM simulation_master WHERE simulation_name = 'Staples PO Simulation' LIMIT 1");
+    const checkSimulation = await pool.query("SELECT id FROM simulation_master WHERE simulation_name = 'Staples PO Simulation' LIMIT 1");
     const odataPayloadObj = {
       d: {
         PurchaseOrder: "4501235707",
@@ -503,13 +502,13 @@ export async function initApiCatalogDb(): Promise<void> {
     };
 
     if ((checkSimulation.rowCount ?? 0) === 0) {
-      await client.query(`
+      await pool.query(`
         INSERT INTO simulation_master (simulation_name, context, form, input_values)
         VALUES ('Staples PO Simulation', 'Staples Purchase Order OData Service', '', $1::jsonb)
       `, [JSON.stringify(odataPayloadObj)]);
     } else {
       // Force update existing Staples simulation record fields
-      await client.query(`
+      await pool.query(`
         UPDATE simulation_master
         SET context = 'Staples Purchase Order OData Service', input_values = $1::jsonb
         WHERE simulation_name = 'Staples PO Simulation'
@@ -550,14 +549,14 @@ export async function initApiCatalogDb(): Promise<void> {
       ]
     });
 
-    const checkNestedContext = await client.query("SELECT id FROM contexts WHERE name = 'Test Nested Loop API' LIMIT 1");
+    const checkNestedContext = await pool.query("SELECT id FROM contexts WHERE name = 'Test Nested Loop API' LIMIT 1");
     if ((checkNestedContext.rowCount ?? 0) === 0) {
-      await client.query(`
+      await pool.query(`
         INSERT INTO contexts (name, endpoint, auth_type, fields, entities, status)
         VALUES ('Test Nested Loop API', 'http://localhost:4000/api/simulation/nested-invoice', 'None', $1::jsonb, $2::jsonb, 'Active')
       `, [nestedFields, nestedEntities]);
     } else {
-      await client.query(`
+      await pool.query(`
         UPDATE contexts 
         SET fields = $1::jsonb, entities = $2::jsonb 
         WHERE name = 'Test Nested Loop API'
@@ -747,14 +746,14 @@ export async function initApiCatalogDb(): Promise<void> {
       }
     };
 
-    const checkNestedSimulation = await client.query("SELECT id FROM simulation_master WHERE simulation_name = 'Test Nested Loop Simulation' LIMIT 1");
+    const checkNestedSimulation = await pool.query("SELECT id FROM simulation_master WHERE simulation_name = 'Test Nested Loop Simulation' LIMIT 1");
     if ((checkNestedSimulation.rowCount ?? 0) === 0) {
-      await client.query(`
+      await pool.query(`
         INSERT INTO simulation_master (simulation_name, context, form, input_values)
         VALUES ('Test Nested Loop Simulation', 'Test Nested Loop API', '', $1::jsonb)
       `, [JSON.stringify(nestedPayloadObj)]);
     } else {
-      await client.query(`
+      await pool.query(`
         UPDATE simulation_master
         SET context = 'Test Nested Loop API', input_values = $1::jsonb
         WHERE simulation_name = 'Test Nested Loop Simulation'
@@ -801,14 +800,14 @@ export async function initApiCatalogDb(): Promise<void> {
       ]
     });
 
-    const checkSoContext = await client.query("SELECT id FROM contexts WHERE name = 'SAP Sales Order' LIMIT 1");
+    const checkSoContext = await pool.query("SELECT id FROM contexts WHERE name = 'SAP Sales Order' LIMIT 1");
     if ((checkSoContext.rowCount ?? 0) === 0) {
-      await client.query(`
+      await pool.query(`
         INSERT INTO contexts (name, endpoint, auth_type, fields, entities, status)
         VALUES ('SAP Sales Order', 'http://localhost:4000/api/simulation/sap-sales-order', 'None', $1::jsonb, $2::jsonb, 'Active')
       `, [soFields, soEntities]);
     } else {
-      await client.query(`
+      await pool.query(`
         UPDATE contexts
         SET fields = $1::jsonb, entities = $2::jsonb,
             endpoint = 'http://localhost:4000/api/simulation/sap-sales-order'
@@ -855,14 +854,14 @@ export async function initApiCatalogDb(): Promise<void> {
       }
     };
 
-    const checkSoSim = await client.query("SELECT id FROM simulation_master WHERE simulation_name = 'SAP Sales Order Simulation' LIMIT 1");
+    const checkSoSim = await pool.query("SELECT id FROM simulation_master WHERE simulation_name = 'SAP Sales Order Simulation' LIMIT 1");
     if ((checkSoSim.rowCount ?? 0) === 0) {
-      await client.query(`
+      await pool.query(`
         INSERT INTO simulation_master (simulation_name, context, form, input_values)
         VALUES ('SAP Sales Order Simulation', 'SAP Sales Order', '', $1::jsonb)
       `, [JSON.stringify(soPayload)]);
     } else {
-      await client.query(`
+      await pool.query(`
         UPDATE simulation_master
         SET context = 'SAP Sales Order', input_values = $1::jsonb
         WHERE simulation_name = 'SAP Sales Order Simulation'
@@ -884,17 +883,17 @@ export async function initApiCatalogDb(): Promise<void> {
           ItemGrossWeight: "10", ItemNetWeight: "10", ItemWeightUnit: "LB" }] }
       }
     };
-    const checkSoLiveSim = await client.query(
+    const checkSoLiveSim = await pool.query(
       "SELECT id FROM simulation_master WHERE simulation_name = 'Sales Order - Live SAP' LIMIT 1"
     );
     if ((checkSoLiveSim.rowCount ?? 0) === 0) {
-      await client.query(`
+      await pool.query(`
         INSERT INTO simulation_master (simulation_name, context, form, input_values)
         VALUES ('Sales Order - Live SAP', 'Sales Order', '', $1::jsonb)
       `, [JSON.stringify(soLivePayload)]);
     }
 
-    await client.query(`
+    await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_outputs_event_id ON outputs(event_id);
       CREATE INDEX IF NOT EXISTS idx_events_event_number ON events(event_number DESC);
       CREATE INDEX IF NOT EXISTS idx_outputs_created_on ON outputs(created_on DESC);
@@ -902,7 +901,7 @@ export async function initApiCatalogDb(): Promise<void> {
     `);
 
     console.log("[db] API catalog + output definition tables ready");
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error("[db] Error in initApiCatalogDb:", err);
   }
 }
