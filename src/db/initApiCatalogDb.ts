@@ -376,6 +376,18 @@ export async function initApiCatalogDb(): Promise<void> {
     await syncAllOutputDefinitionsFromContexts();
     await populateEmptyGetUrls();
 
+    const checkCatalogSeed = await pool.query("SELECT id FROM contexts WHERE name = 'Staples Purchase Order OData Service' LIMIT 1");
+    if ((checkCatalogSeed.rowCount ?? 0) > 0) {
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_outputs_event_id ON outputs(event_id);
+        CREATE INDEX IF NOT EXISTS idx_events_event_number ON events(event_number DESC);
+        CREATE INDEX IF NOT EXISTS idx_outputs_created_on ON outputs(created_on DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_created_on ON events(created_on DESC);
+      `);
+      console.log("[db] API catalog tables already initialized");
+      return;
+    }
+
     // Seed Staples Purchase Order OData Context if missing
     const staplesEntities = JSON.stringify([
       { name: "PurchaseOrder", label: "PurchaseOrder", isCore: true, enabled: true },
