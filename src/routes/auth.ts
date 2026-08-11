@@ -4,7 +4,7 @@ import { pool } from "../db";
 import { hashPassword, verifyPassword } from "../utils/password";
 import { signToken } from "../utils/jwt";
 import { requireUser, AuthedRequest } from "../middleware/auth";
-import { auditActor, AUDIT_SELECT_SQL } from "../utils/audit";
+import { auditActor, AUDIT_SELECT_SQL, auditSelectSql } from "../utils/audit";
 import { buildEncryptedPayload, maybeDecryptPayload } from "../utils/dataEncryption";
 
 const router = Router();
