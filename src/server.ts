@@ -170,12 +170,6 @@ import { restoreSalesOrderV2Templates } from "./update_sales_order_v2";
 
 async function startServer() {
   try {
-    try { await initSettingsDb(); } catch (e) { console.error("[INIT] initSettingsDb error:", e); }
-    try { await initImageDb(); } catch (e) { console.error("[INIT] initImageDb error:", e); }
-    try { await ensureAuditColumns(); } catch (e) { console.error("[INIT] ensureAuditColumns error:", e); }
-    try { await initApiCatalogDb(); } catch (e) { console.error("[INIT] initApiCatalogDb error:", e); }
-    try { await restoreSalesOrderV2Templates(); } catch (e) { console.error("[INIT] restoreSalesOrderV2Templates error:", e); }
-
     if (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
       const options = {
         key: fs.readFileSync(process.env.SSL_KEY_PATH),
@@ -189,6 +183,15 @@ async function startServer() {
         console.log(`[SERVER RUNNING] API running on http://0.0.0.0:${port}`);
       });
     }
+
+    // Run DB init tasks asynchronously in background so app.listen is never blocked
+    (async () => {
+      try { await initSettingsDb(); } catch (e) { console.error("[INIT] initSettingsDb error:", e); }
+      try { await initImageDb(); } catch (e) { console.error("[INIT] initImageDb error:", e); }
+      try { await ensureAuditColumns(); } catch (e) { console.error("[INIT] ensureAuditColumns error:", e); }
+      try { await initApiCatalogDb(); } catch (e) { console.error("[INIT] initApiCatalogDb error:", e); }
+      try { await restoreSalesOrderV2Templates(); } catch (e) { console.error("[INIT] restoreSalesOrderV2Templates error:", e); }
+    })();
   } catch (err) {
     console.error("[CRITICAL ERROR] Failed to initialize backend:", err);
   }
