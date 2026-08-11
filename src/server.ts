@@ -190,7 +190,6 @@ async function startServer() {
       try { await initImageDb(); } catch (e) { console.error("[INIT] initImageDb error:", e); }
       try { await ensureAuditColumns(); } catch (e) { console.error("[INIT] ensureAuditColumns error:", e); }
       try { await initApiCatalogDb(); } catch (e) { console.error("[INIT] initApiCatalogDb error:", e); }
-      try { await restoreSalesOrderV2Templates(); } catch (e) { console.error("[INIT] restoreSalesOrderV2Templates error:", e); }
     })();
   } catch (err) {
     console.error("[CRITICAL ERROR] Failed to initialize backend:", err);
