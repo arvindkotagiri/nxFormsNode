@@ -894,6 +894,13 @@ export async function initApiCatalogDb(): Promise<void> {
       `, [JSON.stringify(soLivePayload)]);
     }
 
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_outputs_event_id ON outputs(event_id);
+      CREATE INDEX IF NOT EXISTS idx_events_event_number ON events(event_number DESC);
+      CREATE INDEX IF NOT EXISTS idx_outputs_created_on ON outputs(created_on DESC);
+      CREATE INDEX IF NOT EXISTS idx_events_created_on ON events(created_on DESC);
+    `);
+
     console.log("[db] API catalog + output definition tables ready");
   } finally {
     client.release();
