@@ -35,10 +35,7 @@ router.get("/", async (req, res) => {
 
     if (context) {
       const p = pushParam(context);
-      where.push(`(
-        LOWER(TRIM(COALESCE(e.context, ''))) = LOWER(TRIM(${p}))
-        OR LOWER(TRIM(COALESCE(c.name, ''))) = LOWER(TRIM(${p}))
-      )`);
+      where.push(`LOWER(TRIM(COALESCE(e.context, ''))) = LOWER(TRIM(${p}))`);
     }
 
     if (source) {
@@ -59,10 +56,6 @@ router.get("/", async (req, res) => {
     const filteredFrom = `
       FROM outputs o
       LEFT JOIN events e ON o.event_id = e.event_id
-      LEFT JOIN contexts c ON (
-        LOWER(TRIM(c.name)) = LOWER(TRIM(e.context))
-        OR LOWER(TRIM(CAST(c.id AS TEXT))) = LOWER(TRIM(e.context))
-      )
       WHERE ${where.join(" AND ")}
     `;
 
@@ -116,14 +109,11 @@ router.get("/", async (req, res) => {
       { label: "Avg Processing Time", value: avgProcessingTime, icon: "Timer", trend: "", up: false, isString: true },
     ];
 
-    // Outputs by Context (case-insensitive merge; prefer catalog display name)
+    // Outputs by Context
     const outputsByContextRes = await pool.query(`
       SELECT
         LOWER(TRIM(COALESCE(e.context, 'unknown'))) AS ctx_key,
-        COALESCE(
-          MAX(c.name),
-          INITCAP(REPLACE(REPLACE(TRIM(MAX(e.context)), '_', ' '), '-', ' '))
-        ) AS name,
+        COALESCE(MAX(e.context), 'Unknown') AS name,
         COUNT(*) FILTER (WHERE o.status = 'Success') AS outputs,
         COUNT(*) FILTER (WHERE o.status = 'Failed') AS errors
       ${filteredFrom}
