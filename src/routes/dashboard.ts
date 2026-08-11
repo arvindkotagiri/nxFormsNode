@@ -143,12 +143,12 @@ router.get("/", async (req, res) => {
       { name: "Pending", value: pending, color: "hsl(var(--warning))" },
     ];
 
-    // Processing Time Trend (hourly avg)
+    // Processing Time Trend (hourly avg using o.duration)
     const timeTrendRes = await pool.query(`
       SELECT date_trunc('hour', o.created_on) AS hour,
-             AVG(EXTRACT(EPOCH FROM (o.completed_at - o.created_on)) * 1000) AS avg_ms
+             AVG(COALESCE(o.duration, 0)) AS avg_ms
       ${filteredFrom}
-      AND o.completed_at IS NOT NULL
+      AND o.created_on IS NOT NULL
       GROUP BY date_trunc('hour', o.created_on)
       ORDER BY hour
     `, params);
