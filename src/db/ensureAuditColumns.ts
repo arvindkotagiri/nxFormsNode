@@ -198,19 +198,27 @@ async function migrateImageMaster(): Promise<void> {
 }
 
 export async function ensureAuditColumns(): Promise<void> {
-  for (const table of AUDIT_TABLES) {
-    if (!(await tableExists(table))) continue;
-    await addAuditColumns(table);
+  try {
+    for (const table of AUDIT_TABLES) {
+      try {
+        if (!(await tableExists(table))) continue;
+        await addAuditColumns(table);
+      } catch (e) {
+        console.error(`[db] Error adding audit columns to ${table}:`, e);
+      }
+    }
+
+    if (await tableExists("label_configs")) { try { await migrateLabelConfigs(); } catch (e) { console.error("[db] migrateLabelConfigs error:", e); } }
+    if (await tableExists("outputs")) { try { await migrateOutputs(); } catch (e) { console.error("[db] migrateOutputs error:", e); } }
+    if (await tableExists("simulation_master")) { try { await migrateSimulation(); } catch (e) { console.error("[db] migrateSimulation error:", e); } }
+    if (await tableExists("users")) { try { await migrateUsers(); } catch (e) { console.error("[db] migrateUsers error:", e); } }
+    if (await tableExists("events")) { try { await migrateEvents(); } catch (e) { console.error("[db] migrateEvents error:", e); } }
+    if (await tableExists("contexts")) { try { await migrateContexts(); } catch (e) { console.error("[db] migrateContexts error:", e); } }
+    if (await tableExists("logs_audit")) { try { await migrateLogsAudit(); } catch (e) { console.error("[db] migrateLogsAudit error:", e); } }
+    if (await tableExists("image_master")) { try { await migrateImageMaster(); } catch (e) { console.error("[db] migrateImageMaster error:", e); } }
+
+    console.log("[db] Audit columns ensured on application tables");
+  } catch (err) {
+    console.error("[db] ensureAuditColumns unexpected error:", err);
   }
-
-  if (await tableExists("label_configs")) await migrateLabelConfigs();
-  if (await tableExists("outputs")) await migrateOutputs();
-  if (await tableExists("simulation_master")) await migrateSimulation();
-  if (await tableExists("users")) await migrateUsers();
-  if (await tableExists("events")) await migrateEvents();
-  if (await tableExists("contexts")) await migrateContexts();
-  if (await tableExists("logs_audit")) await migrateLogsAudit();
-  if (await tableExists("image_master")) await migrateImageMaster();
-
-  console.log("[db] Audit columns ensured on application tables");
 }
