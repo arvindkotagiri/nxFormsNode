@@ -207,17 +207,7 @@ export async function ensureAuditColumns(): Promise<void> {
         console.error(`[db] Error adding audit columns to ${table}:`, e);
       }
     }
-
-    if (await tableExists("label_configs")) { try { await migrateLabelConfigs(); } catch (e) { console.error("[db] migrateLabelConfigs error:", e); } }
-    if (await tableExists("outputs")) { try { await migrateOutputs(); } catch (e) { console.error("[db] migrateOutputs error:", e); } }
-    if (await tableExists("simulation_master")) { try { await migrateSimulation(); } catch (e) { console.error("[db] migrateSimulation error:", e); } }
-    if (await tableExists("users")) { try { await migrateUsers(); } catch (e) { console.error("[db] migrateUsers error:", e); } }
-    if (await tableExists("events")) { try { await migrateEvents(); } catch (e) { console.error("[db] migrateEvents error:", e); } }
-    if (await tableExists("contexts")) { try { await migrateContexts(); } catch (e) { console.error("[db] migrateContexts error:", e); } }
-    if (await tableExists("logs_audit")) { try { await migrateLogsAudit(); } catch (e) { console.error("[db] migrateLogsAudit error:", e); } }
-    if (await tableExists("image_master")) { try { await migrateImageMaster(); } catch (e) { console.error("[db] migrateImageMaster error:", e); } }
-
-    console.log("[db] Audit columns ensured on application tables");
+    console.log("[db] Audit columns verified on application tables");
   } catch (err) {
     console.error("[db] ensureAuditColumns unexpected error:", err);
   }
