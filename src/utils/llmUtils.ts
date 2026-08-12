@@ -248,7 +248,7 @@ function repairJson(jsonStr) {
 }
 
 async function callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes, mediaType, responseMimeType) {
-  let requestedModel = (modelId || 'gemini-2.5-flash').replace(/^google:/, '').replace(/^gemini-3\.5-flash$/, 'gemini-2.5-flash').trim();
+  let requestedModel = (modelId || 'gemini-3.5-flash').replace(/^google:/, '').trim();
   const genAI = new GoogleGenerativeAI(apiKey);
 
   const parts = [];
@@ -285,10 +285,11 @@ async function callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes
 
   const candidateModels = Array.from(new Set([
     requestedModel,
+    'gemini-3.5-flash',
     'gemini-2.5-flash',
+    'gemini-2.0-flash',
     'gemini-1.5-flash',
-    'gemini-1.5-pro',
-    'gemini-2.0-flash'
+    'gemini-1.5-pro'
   ]));
 
   let lastError;

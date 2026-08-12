@@ -75,7 +75,7 @@ export class ChatModel {
     try {
       if (this.provider === 'google') {
         const apiKey = await getApiKey('gemini');
-        let requestedModel = (this.modelId || 'gemini-2.5-flash').replace(/^google:/, '').replace(/^gemini-3\.5-flash$/, 'gemini-2.5-flash').trim();
+        let requestedModel = (this.modelId || 'gemini-3.5-flash').replace(/^google:/, '').trim();
         const genAI = new GoogleGenerativeAI(apiKey);
 
         const system = messages.find(m => m.role === 'system')?.content;
@@ -109,10 +109,11 @@ export class ChatModel {
 
         const candidateModels = Array.from(new Set([
           requestedModel,
+          'gemini-3.5-flash',
           'gemini-2.5-flash',
+          'gemini-2.0-flash',
           'gemini-1.5-flash',
-          'gemini-1.5-pro',
-          'gemini-2.0-flash'
+          'gemini-1.5-pro'
         ]));
 
         let res;
@@ -241,9 +242,9 @@ export class ChatModel {
 export async function getAgentModel(processName: string, agentName: string): Promise<ChatModel> {
   let modelConfig = await getModelForProcess(processName);
   
-  // Use gemini-2.5-flash by default
-  if (!modelConfig || modelConfig.trim() === '' || modelConfig === 'google:gemini-3.5-flash') {
-    modelConfig = 'google:gemini-2.5-flash';
+  // Use gemini-3.5-flash as default selected model
+  if (!modelConfig || modelConfig.trim() === '') {
+    modelConfig = 'google:gemini-3.5-flash';
   }
 
   let provider = 'google';
