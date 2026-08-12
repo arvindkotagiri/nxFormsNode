@@ -3,6 +3,8 @@ import express from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
 import { pool } from '../db';
+import { verifyPassword } from '../utils/password';
+import { signToken } from '../utils/jwt';
 
 const router = express.Router();
 const upload = multer({
@@ -29,20 +31,55 @@ export async function initImageDb() {
   }
 }
 
-router.post('/auth/login', (req, res) => {
-  const mockPayload = '{"exp": 9999999999}';
-  const encodedPayload = Buffer.from(mockPayload).toString('base64').replace(/=/g, '');
-  const mockToken = `mockheader.${encodedPayload}.mocksignature`;
+router.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body || {};
 
-  res.status(200).json({
-    access_token: mockToken,
-    user: {
-      id: 1,
-      name: "Configurator",
-      email: "configurator@test.com",
-      role: "Admin"
+  if (!email || !password) {
+    return res.status(400).json({ detail: 'Email and password are required' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT id::text, email, name, first_name, last_name, organization, tenant_id, status, role, password_hash
+       FROM users
+       WHERE LOWER(email) = LOWER($1)`,
+      [email]
+    );
+
+    const user = result.rows[0];
+    if (!user) return res.status(401).json({ detail: 'Invalid email or password' });
+
+    const ok = await verifyPassword(password, user.password_hash);
+    if (!ok) return res.status(401).json({ detail: 'Invalid email or password' });
+
+    if (user.status === 'PENDING') {
+      return res.status(403).json({ detail: 'Your account is pending approval by an admin.' });
     }
-  });
+
+    if (user.status === 'REJECTED') {
+      return res.status(403).json({ detail: 'Your account registration was rejected by an admin.' });
+    }
+
+    const accessToken = signToken({ sub: user.id, role: user.role });
+    return res.status(200).json({
+      access_token: accessToken,
+      token_type: 'bearer',
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        organization: user.organization,
+        tenant_id: user.tenant_id,
+        status: user.status,
+        role: user.role,
+      }
+    });
+  } catch (err) {
+    console.error('Legacy image-retention login failed:', err);
+    return res.status(500).json({ error: err.message || 'Login failed' });
+  }
 });
 
 router.get('/image-retention', async (req, res) => {
