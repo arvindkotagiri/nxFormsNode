@@ -110,7 +110,7 @@ router.get("/", async (req, res) => {
     }
 
     // 4. Output Status Jobs Metrics
-    // Real table: outputs (columns: output_id, label_id, context, status, printer, created_on, duration)
+    // Real table: outputs (columns: output_id, event_id, form_id, printer, format, status, retries, duration, created_on)
     let totalOutputs = 0;
     let successOutputs = 0;
     let failedOutputs = 0;
@@ -124,7 +124,7 @@ router.get("/", async (req, res) => {
           COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) = 'success')::int AS success,
           COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) IN ('failed', 'error'))::int AS failed,
           COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) IN ('pending', 'processing', 'queued'))::int AS pending,
-          COALESCE(AVG(duration_ms), 0)::int AS avg_duration
+          COALESCE(AVG(duration), 0)::int AS avg_duration
         FROM outputs
       `);
       if (outputsRes.rows.length > 0) {
@@ -137,7 +137,7 @@ router.get("/", async (req, res) => {
       }
 
       const recentOutputsRes = await pool.query(`
-        SELECT output_id, label_id, context, status, printer, created_on, duration_ms
+        SELECT output_id, event_id, form_id, printer, format, status, duration, created_on
         FROM outputs
         ORDER BY created_on DESC
         LIMIT 5
