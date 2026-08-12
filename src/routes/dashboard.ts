@@ -4,148 +4,158 @@ import { pool } from "../db";
 
 const router = Router();
 
-type DateRangeFilter = "today" | "last_24h" | "last_7d";
-
 // GET /api/dashboard
 router.get("/", async (req, res) => {
   try {
     res.setHeader("Cache-Control", "no-store");
 
-    const dateRange = String(req.query.date_range ?? "today").toLowerCase() as DateRangeFilter;
-    const context = String(req.query.context ?? "").trim();
-    const source = String(req.query.source ?? "").trim();
-    const status = String(req.query.status ?? "").trim();
-    const printer = String(req.query.printer ?? "").trim();
-
-    const params: Array<string> = [];
-    const where: Array<string> = [];
-
-    const pushParam = (value: string) => {
-      params.push(value);
-      return `$${params.length}`;
-    };
-
-    if (dateRange === "last_24h") {
-      where.push(`o.created_on >= NOW() - INTERVAL '24 hours'`);
-    } else if (dateRange === "last_7d") {
-      where.push(`o.created_on >= NOW() - INTERVAL '7 days'`);
-    } else {
-      where.push(`o.created_on >= CURRENT_DATE`);
+    // 1. Saved Templates Count & Output Mode Distribution
+    let totalTemplates = 0;
+    let templateModes: any[] = [];
+    try {
+      const templatesRes = await pool.query(`
+        SELECT 
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(output_mode, '')) = 'zpl')::int AS zpl_count,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(output_mode, '')) = 'html')::int AS html_count,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(output_mode, '')) = 'xdp')::int AS xdp_count,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(output_mode, '')) IN ('all', 'both'))::int AS multi_count
+        FROM label_templates
+      `);
+      if (templatesRes.rows.length > 0) {
+        const row = templatesRes.rows[0];
+        totalTemplates = Number(row.total || 0);
+        templateModes = [
+          { name: "ZPL Labels", value: Number(row.zpl_count || 0), color: "#3b82f6" },
+          { name: "HTML / Document", value: Number(row.html_count || 0), color: "#10b981" },
+          { name: "Adobe XDP / Form", value: Number(row.xdp_count || 0), color: "#8b5cf6" },
+          { name: "Multi-Format", value: Number(row.multi_count || 0), color: "#f59e0b" },
+        ];
+      }
+    } catch (e: any) {
+      console.warn("[Dashboard Backend] label_templates table query warning:", e.message);
     }
 
-    if (context) {
-      const p = pushParam(context);
-      where.push(`LOWER(TRIM(COALESCE(e.context, ''))) = LOWER(TRIM(${p}))`);
+    // 2. AI LLM Traces Metrics
+    let totalLlmCalls = 0;
+    let totalTokensUsed = 0;
+    let avgLlmLatencyMs = 0;
+    let recentTraces: any[] = [];
+    try {
+      const tracesRes = await pool.query(`
+        SELECT 
+          COUNT(*)::int AS total,
+          COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
+          COALESCE(AVG(duration_ms), 0)::int AS avg_ms
+        FROM llm_traces
+      `);
+      if (tracesRes.rows.length > 0) {
+        totalLlmCalls = Number(tracesRes.rows[0].total || 0);
+        totalTokensUsed = Number(tracesRes.rows[0].total_tokens || 0);
+        avgLlmLatencyMs = Number(tracesRes.rows[0].avg_ms || 0);
+      }
+
+      const recentTracesRes = await pool.query(`
+        SELECT id, model, prompt_tokens, completion_tokens, total_tokens, duration_ms, status, timestamp
+        FROM llm_traces
+        ORDER BY timestamp DESC
+        LIMIT 5
+      `);
+      recentTraces = recentTracesRes.rows;
+    } catch (e: any) {
+      console.warn("[Dashboard Backend] llm_traces table query warning:", e.message);
     }
 
-    if (source) {
-      const p = pushParam(`%${source}%`);
-      where.push(`LOWER(COALESCE(e.source, '')) LIKE LOWER(${p})`);
+    // 3. Events Metrics
+    let totalEvents = 0;
+    let recentEvents: any[] = [];
+    try {
+      const eventsRes = await pool.query(`SELECT COUNT(*)::int AS total FROM events`);
+      if (eventsRes.rows.length > 0) {
+        totalEvents = Number(eventsRes.rows[0].total || 0);
+      }
+
+      const recentEventsRes = await pool.query(`
+        SELECT event_id, event_type, source, context, payload, timestamp
+        FROM events
+        ORDER BY timestamp DESC
+        LIMIT 5
+      `);
+      recentEvents = recentEventsRes.rows;
+    } catch (e: any) {
+      console.warn("[Dashboard Backend] events table query warning:", e.message);
     }
 
-    if (status) {
-      const p = pushParam(status);
-      where.push(`LOWER(COALESCE(o.status, '')) = LOWER(${p})`);
+    // 4. Output Status Jobs Metrics
+    let totalOutputs = 0;
+    let successOutputs = 0;
+    let failedOutputs = 0;
+    let pendingOutputs = 0;
+    let avgOutputDurationMs = 0;
+    let recentOutputs: any[] = [];
+    try {
+      const outputsRes = await pool.query(`
+        SELECT 
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) = 'success')::int AS success,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) = 'failed')::int AS failed,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) IN ('pending', 'processing'))::int AS pending,
+          COALESCE(AVG(duration), 0)::int AS avg_duration
+        FROM outputs
+      `);
+      if (outputsRes.rows.length > 0) {
+        const r = outputsRes.rows[0];
+        totalOutputs = Number(r.total || 0);
+        successOutputs = Number(r.success || 0);
+        failedOutputs = Number(r.failed || 0);
+        pendingOutputs = Number(r.pending || 0);
+        avgOutputDurationMs = Number(r.avg_duration || 0);
+      }
+
+      const recentOutputsRes = await pool.query(`
+        SELECT output_id, label_id, context, status, printer, created_on, duration
+        FROM outputs
+        ORDER BY created_on DESC
+        LIMIT 5
+      `);
+      recentOutputs = recentOutputsRes.rows;
+    } catch (e: any) {
+      console.warn("[Dashboard Backend] outputs table query warning:", e.message);
     }
 
-    if (printer) {
-      const p = pushParam(printer);
-      where.push(`LOWER(COALESCE(o.printer, '')) = LOWER(${p})`);
+    // 5. Printers Count
+    let totalPrinters = 0;
+    try {
+      const printersRes = await pool.query(`SELECT COUNT(*)::int AS total FROM printers`);
+      if (printersRes.rows.length > 0) {
+        totalPrinters = Number(printersRes.rows[0].total || 0);
+      }
+    } catch (e: any) {
+      console.warn("[Dashboard Backend] printers table query warning:", e.message);
     }
 
-    const filteredFrom = `
-      FROM outputs o
-      LEFT JOIN events e ON o.event_id = e.event_id
-      WHERE ${where.join(" AND ")}
-    `;
-
-    // 1️⃣ Aggregate all KPI metrics in a single query
-    const kpiRes = await pool.query(`
-      SELECT
-        COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE o.status = 'Success') AS success,
-        COUNT(*) FILTER (WHERE o.status = 'Failed') AS failed,
-        COUNT(*) FILTER (WHERE o.status = 'Pending') AS pending,
-        AVG(COALESCE(o.duration, 0)) AS avg_ms
-      ${filteredFrom}
-    `, params);
-
-    const kpiRow = kpiRes.rows[0] || {};
-    const totalOutputsToday = Number(kpiRow.total || 0);
-    const processedSuccessfully = Number(kpiRow.success || 0);
-    const failed = Number(kpiRow.failed || 0);
-    const pending = Number(kpiRow.pending || 0);
-    const avgProcessingTime = kpiRow.avg_ms ? `${Math.round(Number(kpiRow.avg_ms))}ms` : "0ms";
-
-    // KPI Cards
-    const kpiCards = [
-      { label: "Total Outputs Today", value: totalOutputsToday, icon: "FileOutput", trend: "", up: true },
-      { label: "Processed Successfully", value: processedSuccessfully, icon: "CheckCircle", trend: "", up: true },
-      { label: "Failed", value: failed, icon: "XCircle", trend: "", up: false },
-      { label: "Pending", value: pending, icon: "Clock", trend: "", up: true },
-      { label: "Avg Processing Time", value: avgProcessingTime, icon: "Timer", trend: "", up: false, isString: true },
-    ];
-
-    // Outputs by Context
-    const outputsByContextRes = await pool.query(`
-      SELECT
-        LOWER(TRIM(COALESCE(e.context, 'unknown'))) AS ctx_key,
-        COALESCE(MAX(e.context), 'Unknown') AS name,
-        COUNT(*) FILTER (WHERE o.status = 'Success') AS outputs,
-        COUNT(*) FILTER (WHERE o.status = 'Failed') AS errors
-      ${filteredFrom}
-      GROUP BY LOWER(TRIM(COALESCE(e.context, 'unknown')))
-      ORDER BY outputs DESC
-    `, params);
-    const outputsByContext = outputsByContextRes.rows.map((r: any) => ({
-      name: r.name,
-      outputs: Number(r.outputs),
-      errors: Number(r.errors),
-    }));
-
-    // Status Distribution
-    const statusDist = [
-      { name: "Success", value: processedSuccessfully, color: "hsl(var(--success))" },
-      { name: "Failed", value: failed, color: "hsl(var(--error))" },
-      { name: "Pending", value: pending, color: "hsl(var(--warning))" },
-    ];
-
-    // Processing Time Trend (hourly avg using o.duration)
-    const timeTrendRes = await pool.query(`
-      SELECT date_trunc('hour', o.created_on) AS hour,
-             AVG(COALESCE(o.duration, 0)) AS avg_ms
-      ${filteredFrom}
-      AND o.created_on IS NOT NULL
-      GROUP BY date_trunc('hour', o.created_on)
-      ORDER BY hour
-    `, params);
-    const timeTrend = timeTrendRes.rows.map((r: any) => ({
-      time: new Date(r.hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      ms: Math.round(r.avg_ms),
-    }));
-
-    // Printer Utilization (percentage of outputs per printer)
-    const printerUtilRes = await pool.query(`
-      SELECT o.printer,
-             COUNT(*) FILTER (WHERE o.status IS NOT NULL) * 100.0 / NULLIF(COUNT(*), 0) AS util
-      ${filteredFrom}
-      GROUP BY o.printer
-      ORDER BY util DESC
-    `, params);
-    const printerUtil = printerUtilRes.rows.map((r: any) => ({
-      name: r.printer,
-      util: Math.round(r.util),
-    }));
-
+    // Return combined clean dashboard payload
     res.json({
-      kpiCards,
-      outputsByContext,
-      statusDist,
-      timeTrend,
-      printerUtil,
+      summary: {
+        totalTemplates,
+        totalLlmCalls,
+        totalEvents,
+        totalOutputs,
+        successOutputs,
+        failedOutputs,
+        pendingOutputs,
+        totalPrinters,
+        totalTokensUsed,
+        avgLlmLatencyMs,
+        avgOutputDurationMs,
+      },
+      templateModes,
+      recentTraces,
+      recentEvents,
+      recentOutputs,
     });
   } catch (err: any) {
-    console.error(err);
+    console.error("[Dashboard Route Error]", err);
     res.status(500).json({ error: err.message });
   }
 });
