@@ -25,11 +25,17 @@ router.get("/", async (req, res) => {
       if (templatesRes.rows.length > 0) {
         const row = templatesRes.rows[0];
         totalTemplates = Number(row.total || 0);
+        const zpl = Number(row.zpl_count || 0);
+        const html = Number(row.html_count || 0);
+        const xdp = Number(row.xdp_count || 0);
+        const multi = Number(row.multi_count || 0);
+        const unassigned = Math.max(0, totalTemplates - (zpl + html + xdp + multi));
+
         templateModes = [
-          { name: "ZPL Labels", value: Number(row.zpl_count || 0), color: "#3b82f6" },
-          { name: "HTML / Document", value: Number(row.html_count || 0), color: "#10b981" },
-          { name: "Adobe XDP / Form", value: Number(row.xdp_count || 0), color: "#8b5cf6" },
-          { name: "Multi-Format", value: Number(row.multi_count || 0), color: "#f59e0b" },
+          { name: "ZPL Labels", value: zpl + unassigned, color: "#3b82f6" },
+          { name: "HTML / Document", value: html, color: "#10b981" },
+          { name: "Adobe XDP / Form", value: xdp, color: "#8b5cf6" },
+          { name: "Multi-Format", value: multi, color: "#f59e0b" },
         ];
       }
     } catch (e: any) {
@@ -123,15 +129,18 @@ router.get("/", async (req, res) => {
       console.warn("[Dashboard Backend] outputs table query warning:", e.message);
     }
 
-    // 5. Printers Count
+    // 5. Printers Count (checking printer_master & printers)
     let totalPrinters = 0;
     try {
-      const printersRes = await pool.query(`SELECT COUNT(*)::int AS total FROM printers`);
-      if (printersRes.rows.length > 0) {
-        totalPrinters = Number(printersRes.rows[0].total || 0);
-      }
+      const pmRes = await pool.query(`SELECT COUNT(*)::int AS total FROM printer_master`);
+      totalPrinters = Number(pmRes.rows[0]?.total || 0);
     } catch (e: any) {
-      console.warn("[Dashboard Backend] printers table query warning:", e.message);
+      try {
+        const printersRes = await pool.query(`SELECT COUNT(*)::int AS total FROM printers`);
+        totalPrinters = Number(printersRes.rows[0]?.total || 0);
+      } catch (err: any) {
+        console.warn("[Dashboard Backend] printer query warning:", err.message);
+      }
     }
 
     // Return combined clean dashboard payload
