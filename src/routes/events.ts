@@ -16,6 +16,36 @@ const router = Router();
  */
 router.get("/", async (req, res) => {
   try {
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+    const limit = Math.max(1, Math.min(100, parseInt(String(req.query.limit || "20"), 10)));
+    const offset = (page - 1) * limit;
+    const search = String(req.query.search || "").trim();
+    const context = String(req.query.context || "").trim();
+
+    const whereClauses: string[] = [];
+    const params: any[] = [];
+
+    if (context) {
+      params.push(context);
+      whereClauses.push(`LOWER(context) = LOWER($${params.length})`);
+    }
+
+    if (search) {
+      params.push(`%${search}%`);
+      const p = `$${params.length}`;
+      whereClauses.push(`(source ILIKE ${p} OR context ILIKE ${p} OR form ILIKE ${p} OR CAST(event_number AS TEXT) ILIKE ${p})`);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    // Count total events
+    const countRes = await pool.query(`SELECT COUNT(*) AS total FROM events ${whereSql}`, params);
+    const total = parseInt(countRes.rows[0].total || "0", 10);
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    params.push(limit, offset);
+    const limitOffsetSql = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
+
     const result = await pool.query(`
       SELECT 
         event_number,
@@ -28,40 +58,41 @@ router.get("/", async (req, res) => {
         duration_ms,
         outputs,
         triggered_by,
-        encrypted_payload,
         ${AUDIT_SELECT_SQL}
       FROM events
+      ${whereSql}
       ORDER BY event_timestamp DESC
-      LIMIT 200
-    `);
+      ${limitOffsetSql}
+    `, params.slice(0, params.length));
 
-    const formatted = result.rows.map((r) => {
-      let decryptedPayload: any = null;
-      if (r.encrypted_payload) {
-        try {
-          decryptedPayload = maybeDecryptPayload(r.encrypted_payload) as any;
-        } catch (err) {
-          console.warn("Failed to decrypt event payload:", err);
-        }
-      }
-      return {
-        id: r.event_id,
-        evt_no: r.event_number,
-        source: decryptedPayload?.source ?? r.source,
-        context: decryptedPayload?.context ?? r.context,
-        form: decryptedPayload?.form ?? r.form,
-        status: r.status ?? decryptedPayload?.status,
-        ts: decryptedPayload?.event_timestamp ?? r.event_timestamp,
-        duration: r.duration_ms ? `${r.duration_ms}ms` : "–",
-        outputs: decryptedPayload?.outputs ?? r.outputs,
-        created_by: r.triggered_by,
-        created_on: r.created_on,
-        updated_by: r.updated_by,
-        updated_on: r.updated_on,
-      };
-    });
+    const formatted = result.rows.map((r) => ({
+      id: r.event_id,
+      evt_no: r.event_number,
+      source: r.source,
+      context: r.context,
+      form: r.form,
+      status: r.status,
+      ts: r.event_timestamp,
+      duration: r.duration_ms ? `${r.duration_ms}ms` : "–",
+      outputs: r.outputs,
+      created_by: r.triggered_by,
+      created_on: r.created_on,
+      updated_by: r.updated_by,
+      updated_on: r.updated_on,
+    }));
 
-    res.json(formatted);
+    res.setHeader("Cache-Control", "no-store");
+    if (req.query.page || req.query.limit || req.query.paginated === "true") {
+      res.json({
+        data: formatted,
+        total,
+        page,
+        totalPages,
+        limit,
+      });
+    } else {
+      res.json(formatted);
+    }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch events" });
