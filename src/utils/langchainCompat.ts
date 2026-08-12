@@ -112,7 +112,6 @@ export class ChatModel {
           'gemini-3.5-flash',
           'gemini-2.5-flash',
           'gemini-2.0-flash',
-          'gemini-1.5-flash-latest',
           'gemini-1.5-flash',
           'gemini-1.5-pro'
         ]));
@@ -243,8 +242,8 @@ export class ChatModel {
 export async function getAgentModel(processName: string, agentName: string): Promise<ChatModel> {
   let modelConfig = await getModelForProcess(processName);
   
-  // Use gemini-3.5-flash by default as requested
-  if (!modelConfig || modelConfig.trim() === '' || modelConfig === 'google:gemini-1.5-pro') {
+  // Use gemini-3.5-flash as default selected model
+  if (!modelConfig || modelConfig.trim() === '') {
     modelConfig = 'google:gemini-3.5-flash';
   }
 

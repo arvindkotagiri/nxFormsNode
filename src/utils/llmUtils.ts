@@ -288,7 +288,6 @@ async function callGemini(modelId, apiKey, prompt, systemInstruction, imageBytes
     'gemini-3.5-flash',
     'gemini-2.5-flash',
     'gemini-2.0-flash',
-    'gemini-1.5-flash-latest',
     'gemini-1.5-flash',
     'gemini-1.5-pro'
   ]));
