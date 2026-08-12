@@ -10,6 +10,7 @@ router.get("/", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
 
     // 1. Saved Templates Count & Output Mode Distribution
+    // Real table: label_master (columns: label_id, label_name, output_mode, created_on)
     let totalTemplates = 0;
     let templateModes: any[] = [];
     try {
@@ -20,7 +21,7 @@ router.get("/", async (req, res) => {
           COUNT(*) FILTER (WHERE LOWER(COALESCE(output_mode, '')) = 'html')::int AS html_count,
           COUNT(*) FILTER (WHERE LOWER(COALESCE(output_mode, '')) = 'xdp')::int AS xdp_count,
           COUNT(*) FILTER (WHERE LOWER(COALESCE(output_mode, '')) IN ('all', 'both'))::int AS multi_count
-        FROM label_templates
+        FROM label_master
       `);
       if (templatesRes.rows.length > 0) {
         const row = templatesRes.rows[0];
@@ -39,10 +40,11 @@ router.get("/", async (req, res) => {
         ];
       }
     } catch (e: any) {
-      console.warn("[Dashboard Backend] label_templates table query warning:", e.message);
+      console.warn("[Dashboard Backend] label_master query warning:", e.message);
     }
 
     // 2. AI LLM Traces Metrics
+    // Real table: llm_traces (columns: id, agent_name, model_used, prompt_tokens, completion_tokens, total_tokens, duration_ms, status, created_at)
     let totalLlmCalls = 0;
     let totalTokensUsed = 0;
     let avgLlmLatencyMs = 0;
@@ -62,17 +64,27 @@ router.get("/", async (req, res) => {
       }
 
       const recentTracesRes = await pool.query(`
-        SELECT id, model, prompt_tokens, completion_tokens, total_tokens, duration_ms, status, timestamp
+        SELECT 
+          id,
+          agent_name,
+          model_used AS model,
+          prompt_tokens,
+          completion_tokens,
+          total_tokens,
+          duration_ms,
+          status,
+          created_at AS timestamp
         FROM llm_traces
-        ORDER BY timestamp DESC
+        ORDER BY created_at DESC
         LIMIT 5
       `);
       recentTraces = recentTracesRes.rows;
     } catch (e: any) {
-      console.warn("[Dashboard Backend] llm_traces table query warning:", e.message);
+      console.warn("[Dashboard Backend] llm_traces query warning:", e.message);
     }
 
     // 3. Events Metrics
+    // Real table: events (columns: event_id, source, context, event_type, event_timestamp, created_on)
     let totalEvents = 0;
     let recentEvents: any[] = [];
     try {
@@ -82,17 +94,23 @@ router.get("/", async (req, res) => {
       }
 
       const recentEventsRes = await pool.query(`
-        SELECT event_id, event_type, source, context, payload, timestamp
+        SELECT 
+          event_id,
+          event_type,
+          source,
+          context,
+          event_timestamp AS timestamp
         FROM events
-        ORDER BY timestamp DESC
+        ORDER BY event_timestamp DESC
         LIMIT 5
       `);
       recentEvents = recentEventsRes.rows;
     } catch (e: any) {
-      console.warn("[Dashboard Backend] events table query warning:", e.message);
+      console.warn("[Dashboard Backend] events query warning:", e.message);
     }
 
     // 4. Output Status Jobs Metrics
+    // Real table: outputs (columns: output_id, label_id, context, status, printer, created_on, duration)
     let totalOutputs = 0;
     let successOutputs = 0;
     let failedOutputs = 0;
@@ -104,9 +122,9 @@ router.get("/", async (req, res) => {
         SELECT 
           COUNT(*)::int AS total,
           COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) = 'success')::int AS success,
-          COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) = 'failed')::int AS failed,
-          COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) IN ('pending', 'processing'))::int AS pending,
-          COALESCE(AVG(duration), 0)::int AS avg_duration
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) IN ('failed', 'error'))::int AS failed,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) IN ('pending', 'processing', 'queued'))::int AS pending,
+          COALESCE(AVG(duration_ms), 0)::int AS avg_duration
         FROM outputs
       `);
       if (outputsRes.rows.length > 0) {
@@ -119,17 +137,17 @@ router.get("/", async (req, res) => {
       }
 
       const recentOutputsRes = await pool.query(`
-        SELECT output_id, label_id, context, status, printer, created_on, duration
+        SELECT output_id, label_id, context, status, printer, created_on, duration_ms
         FROM outputs
         ORDER BY created_on DESC
         LIMIT 5
       `);
       recentOutputs = recentOutputsRes.rows;
     } catch (e: any) {
-      console.warn("[Dashboard Backend] outputs table query warning:", e.message);
+      console.warn("[Dashboard Backend] outputs query warning:", e.message);
     }
 
-    // 5. Printers Count (checking printer_master & printers)
+    // 5. Printers Count (printer_master)
     let totalPrinters = 0;
     try {
       const pmRes = await pool.query(`SELECT COUNT(*)::int AS total FROM printer_master`);
