@@ -82,7 +82,7 @@ router.post('/auth/login', async (req, res) => {
   }
 });
 
-router.get('/image-retention', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const result = await pool.query("SELECT id, name, size, resolution, color FROM image_master ORDER BY id DESC");
     const formatted = result.rows.map(r => ({
@@ -99,7 +99,7 @@ router.get('/image-retention', async (req, res) => {
   }
 });
 
-router.post('/image-retention/metadata', upload.array('images'), async (req, res) => {
+router.post('/metadata', upload.array('images'), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: "No image files in request" });
@@ -173,7 +173,7 @@ router.post('/image-retention/metadata', upload.array('images'), async (req, res
   }
 });
 
-router.get('/image-retention/:image_id/image', async (req, res) => {
+router.get('/:image_id/image', async (req, res) => {
   const { image_id } = req.params;
   try {
     const result = await pool.query("SELECT image_data, mime_type, name FROM image_master WHERE id = $1", [image_id]);
@@ -212,7 +212,7 @@ router.get('/image-retention/:image_id/image', async (req, res) => {
   }
 });
 
-router.delete('/image-retention/:image_id', async (req, res) => {
+router.delete('/:image_id', async (req, res) => {
   const { image_id } = req.params;
   try {
     await pool.query("DELETE FROM image_master WHERE id = $1", [image_id]);
